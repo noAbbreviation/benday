@@ -8,6 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const (
+	BRAILLE_HEIGHT = 4
+	BRAILLE_WIDTH  = 2
+)
+
 type canvasModel struct {
 	pixels   [][]bool
 	fileName string

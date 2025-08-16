@@ -3,11 +3,17 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"image/color"
+	"image/png"
 )
 
 var (
@@ -25,8 +31,8 @@ type createCanvasModel struct {
 }
 
 const (
-	widthInputC = iota
-	heightInputC
+	brailleWInputC = iota
+	brailleHInputC
 	paddingXInputC
 	paddingYInputC
 	fileNameInputC
@@ -35,20 +41,20 @@ const (
 func newCreateCanvasModel() createCanvasModel {
 	inputs := [5]textinput.Model{}
 
-	inputs[widthInputC] = textinput.New()
-	inputs[widthInputC].Placeholder = ""
-	inputs[widthInputC].Focus()
-	inputs[widthInputC].CharLimit = 5
-	inputs[widthInputC].Width = 7
-	inputs[widthInputC].Prompt = ""
-	inputs[widthInputC].Validate = isWholeNumber
+	inputs[brailleWInputC] = textinput.New()
+	inputs[brailleWInputC].Placeholder = ""
+	inputs[brailleWInputC].Focus()
+	inputs[brailleWInputC].CharLimit = 5
+	inputs[brailleWInputC].Width = 7
+	inputs[brailleWInputC].Prompt = ""
+	inputs[brailleWInputC].Validate = isWholeNumber
 
-	inputs[heightInputC] = textinput.New()
-	inputs[heightInputC].Placeholder = ""
-	inputs[heightInputC].CharLimit = 5
-	inputs[heightInputC].Width = 7
-	inputs[heightInputC].Prompt = ""
-	inputs[heightInputC].Validate = isWholeNumber
+	inputs[brailleHInputC] = textinput.New()
+	inputs[brailleHInputC].Placeholder = ""
+	inputs[brailleHInputC].CharLimit = 5
+	inputs[brailleHInputC].Width = 7
+	inputs[brailleHInputC].Prompt = ""
+	inputs[brailleHInputC].Validate = isWholeNumber
 
 	inputs[paddingXInputC] = textinput.New()
 	inputs[paddingXInputC].Placeholder = ""
@@ -153,7 +159,7 @@ func (m createCanvasModel) View() string {
 				"Cannot proceed with image creation.",
 				"Fields marked with question marks(?) are invalid.",
 				"",
-				"(press any key to go back)",
+				"(press any key to go back, ctrl+c to cancel)",
 			}
 			promptText = strings.Join(errorPrompt[:], "\n")
 		} else {
@@ -163,7 +169,7 @@ func (m createCanvasModel) View() string {
 				"",
 				"([Y]es, [N]o / [C]ancel, [B]ack)",
 			}
-			//  TODO: Add dimensions of the new image to the confirm prompt
+			//  TODO: Add preview of the canvas size of the new image to the confirm prompt
 			promptText = strings.Join(prompt[:], "\n")
 		}
 	} else if m.focused == len(m.inputs)-1 {
@@ -184,8 +190,8 @@ func (m createCanvasModel) View() string {
 	result := [...]string{
 		"Create a new canvas image:",
 		"",
-		fmt.Sprintf("%v Width(in braille characters): %s", valid[widthInputC], m.inputs[widthInputC].View()),
-		fmt.Sprintf("%v Height(in braille characters): %s", valid[heightInputC], m.inputs[heightInputC].View()),
+		fmt.Sprintf("%v Width(in braille characters): %s", valid[brailleWInputC], m.inputs[brailleWInputC].View()),
+		fmt.Sprintf("%v Height(in braille characters): %s", valid[brailleHInputC], m.inputs[brailleHInputC].View()),
 		fmt.Sprintf("%v Padding X(in braille dots): %s", valid[paddingXInputC], m.inputs[paddingXInputC].View()),
 		fmt.Sprintf("%v Padding Y(in braille dots): %s", valid[paddingYInputC], m.inputs[paddingYInputC].View()),
 		fmt.Sprintf("%v File name prefix: %s", valid[fileNameInputC], m.inputs[fileNameInputC].View()),
@@ -229,7 +235,7 @@ func (m createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "y", "enter":
-				//  TODO: Create a new file from here
+				m.createFile()
 				return m, tea.Quit
 			case "b":
 				m.showConfirmPrompt = false
@@ -284,6 +290,7 @@ func (m createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// TODO: Could be wrapping utils
 func (m *createCanvasModel) prevItem() {
 	m.focused -= 1
 
@@ -294,4 +301,76 @@ func (m *createCanvasModel) prevItem() {
 
 func (m *createCanvasModel) nextItem() {
 	m.focused = (m.focused + 1) % (len(m.inputs))
+}
+
+func (m createCanvasModel) createFile() error {
+	file, err := os.Create(m.fileName())
+	if err != nil {
+		return fmt.Errorf("Error creating the file: %v", err)
+	}
+
+	if err = m.inputs[brailleWInputC].Err; err != nil {
+		return fmt.Errorf("Incorrect input on width: %v", err)
+	}
+
+	if err = m.inputs[brailleHInputC].Err; err != nil {
+		return fmt.Errorf("Incorrect input on height: %v", err)
+	}
+
+	if err = m.inputs[paddingXInputC].Err; err != nil {
+		return fmt.Errorf("Incorrect input on paddingX: %v", err)
+	}
+
+	if err = m.inputs[paddingYInputC].Err; err != nil {
+		return fmt.Errorf("Incorrect input on paddingY: %v", err)
+	}
+
+	brailleCharsW, _ := strconv.Atoi(m.inputs[brailleWInputC].Value())
+	brailleCharsH, _ := strconv.Atoi(m.inputs[brailleHInputC].Value())
+	paddingX, _ := strconv.Atoi(m.inputs[paddingXInputC].Value())
+	paddingY, _ := strconv.Atoi(m.inputs[paddingYInputC].Value())
+
+	imageWidth := brailleCharsW * (paddingX + BRAILLE_WIDTH)
+	imageHeight := brailleCharsH * (paddingY + BRAILLE_HEIGHT)
+
+	img := image.NewNRGBA(image.Rect(0, 0, imageWidth, imageHeight))
+
+	for y := range imageHeight {
+		for x := range imageWidth {
+			img.Set(x, y, color.Transparent)
+		}
+	}
+
+	colorGray := color.Gray{0xcc}
+	paintWhiteFlagger := true
+
+	for bigYOff := 0; bigYOff < imageHeight; bigYOff += paddingY + BRAILLE_HEIGHT {
+		_paintWhite := paintWhiteFlagger
+
+		for bigXOff := 0; bigXOff < imageWidth; bigXOff += paddingX + BRAILLE_WIDTH {
+			for charYOff := 0; charYOff < BRAILLE_HEIGHT; charYOff += 1 {
+				for charXOff := 0; charXOff < BRAILLE_WIDTH; charXOff += 1 {
+					x := bigXOff + charXOff
+					y := bigYOff + charYOff
+
+					if _paintWhite {
+						img.Set(x, y, color.White)
+					} else {
+						img.Set(x, y, colorGray)
+					}
+				}
+			}
+
+			_paintWhite = !_paintWhite
+		}
+
+		paintWhiteFlagger = !paintWhiteFlagger
+	}
+
+	err = png.Encode(io.Writer(file), img)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
