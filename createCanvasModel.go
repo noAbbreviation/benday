@@ -38,7 +38,7 @@ const (
 	fileNameInputC
 )
 
-func newCreateCanvasModel() createCanvasModel {
+func newCreateCanvasModel() *createCanvasModel {
 	inputs := [5]textinput.Model{}
 
 	inputs[brailleWInputC] = textinput.New()
@@ -79,7 +79,7 @@ func newCreateCanvasModel() createCanvasModel {
 	inputs[fileNameInputC].Prompt = ""
 	inputs[fileNameInputC].Validate = isValidFileName
 
-	return createCanvasModel{
+	return &createCanvasModel{
 		inputs: inputs,
 		err:    nil,
 	}
@@ -138,11 +138,11 @@ func (m createCanvasModel) fileName() string {
 	return fileName
 }
 
-func (m createCanvasModel) Init() tea.Cmd {
+func (m *createCanvasModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-func (m createCanvasModel) View() string {
+func (m *createCanvasModel) View() string {
 	promptText := ""
 	if m.showConfirmPrompt {
 		hasError := false
@@ -153,11 +153,15 @@ func (m createCanvasModel) View() string {
 			}
 		}
 
-		if hasError || m.err != nil {
+		if modelError := m.err; hasError || modelError != nil {
+			errorMessage := "Fields marked with question marks(?) are invalid."
+			if modelError != nil {
+				errorMessage = fmt.Sprint(modelError)
+			}
+
 			errorPrompt := [...]string{
-				"",
-				"Cannot proceed with image creation.",
-				"Fields marked with question marks(?) are invalid.",
+				"Cannot proceed with file creation.",
+				errorMessage,
 				"",
 				"(press any key to go back, ctrl+c to cancel)",
 			}
@@ -188,12 +192,12 @@ func (m createCanvasModel) View() string {
 	}
 
 	result := [...]string{
-		"Create a new canvas image:",
+		"Generate a new canvas image:",
 		"",
 		fmt.Sprintf("%v Width(in braille characters): %s", valid[brailleWInputC], m.inputs[brailleWInputC].View()),
 		fmt.Sprintf("%v Height(in braille characters): %s", valid[brailleHInputC], m.inputs[brailleHInputC].View()),
-		fmt.Sprintf("%v Padding X(in braille dots): %s", valid[paddingXInputC], m.inputs[paddingXInputC].View()),
-		fmt.Sprintf("%v Padding Y(in braille dots): %s", valid[paddingYInputC], m.inputs[paddingYInputC].View()),
+		fmt.Sprintf("%v Image padding X(in braille dots): %s", valid[paddingXInputC], m.inputs[paddingXInputC].View()),
+		fmt.Sprintf("%v Image padding Y(in braille dots): %s", valid[paddingYInputC], m.inputs[paddingYInputC].View()),
 		fmt.Sprintf("%v File name prefix: %s", valid[fileNameInputC], m.inputs[fileNameInputC].View()),
 		"",
 		promptText,
@@ -201,7 +205,7 @@ func (m createCanvasModel) View() string {
 	return strings.Join(result[:], "\n")
 }
 
-func (m createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, len(m.inputs))
 
 	switch msg := msg.(type) {
@@ -225,6 +229,8 @@ func (m createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, ok := msg.(tea.KeyMsg); ok {
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
+				m.err = nil
+
 				return m, nil
 			}
 
@@ -235,7 +241,11 @@ func (m createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "y", "enter":
-				m.createFile()
+				if err := m.createFile(); err != nil {
+					m.err = err
+					return m, nil
+				}
+
 				return m, tea.Quit
 			case "b":
 				m.showConfirmPrompt = false
@@ -304,25 +314,29 @@ func (m *createCanvasModel) nextItem() {
 }
 
 func (m createCanvasModel) createFile() error {
-	file, err := os.Create(m.fileName())
+	fileName := m.fileName()
+
+	file, err := os.Create(fileName)
 	if err != nil {
-		return fmt.Errorf("Error creating the file: %v", err)
+		return fmt.Errorf(
+			"Error creating the file: \"%v\" may have illegal characters.", fileName,
+		)
 	}
 
 	if err = m.inputs[brailleWInputC].Err; err != nil {
-		return fmt.Errorf("Incorrect input on width: %v", err)
+		return fmt.Errorf("Invalid input on width: %v", err)
 	}
 
 	if err = m.inputs[brailleHInputC].Err; err != nil {
-		return fmt.Errorf("Incorrect input on height: %v", err)
+		return fmt.Errorf("Invalid input on height: %v", err)
 	}
 
 	if err = m.inputs[paddingXInputC].Err; err != nil {
-		return fmt.Errorf("Incorrect input on paddingX: %v", err)
+		return fmt.Errorf("Invalid input on paddingX: %v", err)
 	}
 
 	if err = m.inputs[paddingYInputC].Err; err != nil {
-		return fmt.Errorf("Incorrect input on paddingY: %v", err)
+		return fmt.Errorf("Invalid input on paddingY: %v", err)
 	}
 
 	brailleCharsW, _ := strconv.Atoi(m.inputs[brailleWInputC].Value())
