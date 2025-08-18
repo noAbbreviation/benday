@@ -166,6 +166,7 @@ func (m *createCanvasModel) Init() tea.Cmd {
 
 func (m *createCanvasModel) View() string {
 	promptText := ""
+	//  TODO: Refactor this into its own function
 	if m.showConfirmPrompt {
 		hasError := false
 		for _, input := range m.inputs {
