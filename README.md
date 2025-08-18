@@ -4,4 +4,4 @@ Seamless workflow CLI application for creating, viewing and modifying braille AS
 
 ## TODO
 
-- Look at the `lipgloss` package for coloring and alignments
+- [x] Look at the `lipgloss` package for coloring and alignments

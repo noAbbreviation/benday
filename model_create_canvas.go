@@ -11,9 +11,30 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"image/color"
 	"image/png"
+)
+
+var (
+	Black   = "0"
+	Red     = "1"
+	Green   = "2"
+	Yellow  = "3"
+	Blue    = "4"
+	Magenta = "5"
+	Cyan    = "6"
+	White   = "7"
+
+	BrightBlack   = "8"
+	BrightRed     = "9"
+	BrightGreen   = "10"
+	BrightYellow  = "11"
+	BrightBlue    = "12"
+	BrightMagenta = "13"
+	BrightCyan    = "14"
+	BrightWhite   = "15"
 )
 
 var (
@@ -23,7 +44,7 @@ var (
 )
 
 type createCanvasModel struct {
-	inputs  [5]textinput.Model
+	inputs  *[5]textinput.Model
 	focused int
 	err     error
 
@@ -48,6 +69,7 @@ func newCreateCanvasModel() *createCanvasModel {
 	inputs[brailleWInputC].Width = 7
 	inputs[brailleWInputC].Prompt = ""
 	inputs[brailleWInputC].Validate = isWholeNumber
+	inputs[brailleWInputC].SetValue("")
 
 	inputs[brailleHInputC] = textinput.New()
 	inputs[brailleHInputC].Placeholder = ""
@@ -61,8 +83,8 @@ func newCreateCanvasModel() *createCanvasModel {
 	inputs[paddingXInputC].CharLimit = 5
 	inputs[paddingXInputC].Width = 7
 	inputs[paddingXInputC].Prompt = ""
-	inputs[paddingXInputC].SetValue("0")
 	inputs[paddingXInputC].Validate = isValidPadding
+	inputs[paddingXInputC].SetValue("0")
 
 	inputs[paddingYInputC] = textinput.New()
 	inputs[paddingYInputC].Placeholder = ""
@@ -80,7 +102,7 @@ func newCreateCanvasModel() *createCanvasModel {
 	inputs[fileNameInputC].Validate = isValidFileName
 
 	return &createCanvasModel{
-		inputs: inputs,
+		inputs: &inputs,
 		err:    nil,
 	}
 }
@@ -173,7 +195,6 @@ func (m *createCanvasModel) View() string {
 				"",
 				"([Y]es, [N]o / [C]ancel, [B]ack)",
 			}
-			//  TODO: Add preview of the canvas size of the new image to the confirm prompt
 			promptText = strings.Join(prompt[:], "\n")
 		}
 	} else if m.focused == len(m.inputs)-1 {
@@ -191,18 +212,85 @@ func (m *createCanvasModel) View() string {
 		}
 	}
 
-	result := [...]string{
+	canvasForm := lipgloss.JoinVertical(
+		lipgloss.Left,
+		fmt.Sprintf("%v Width(in braille characters): %s", valid[brailleWInputC], m.inputs[brailleWInputC].View()),
+		"",
+		fmt.Sprintf("%v Height(in braille characters): %s", valid[brailleHInputC], m.inputs[brailleHInputC].View()),
+		"",
+		fmt.Sprintf("%v Image padding X(in braille dots): %s", valid[paddingXInputC], m.inputs[paddingXInputC].View()),
+		"",
+		fmt.Sprintf("%v Image padding Y(in braille dots): %s", valid[paddingYInputC], m.inputs[paddingYInputC].View()),
+		"",
+		fmt.Sprintf("%v File name prefix: %s", valid[fileNameInputC], m.inputs[fileNameInputC].View()),
+	)
+
+	canvasPreview := lipgloss.JoinHorizontal(lipgloss.Center, m.previewCanvas(), " ", canvasForm)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		"Generate a new canvas image:",
 		"",
-		fmt.Sprintf("%v Width(in braille characters): %s", valid[brailleWInputC], m.inputs[brailleWInputC].View()),
-		fmt.Sprintf("%v Height(in braille characters): %s", valid[brailleHInputC], m.inputs[brailleHInputC].View()),
-		fmt.Sprintf("%v Image padding X(in braille dots): %s", valid[paddingXInputC], m.inputs[paddingXInputC].View()),
-		fmt.Sprintf("%v Image padding Y(in braille dots): %s", valid[paddingYInputC], m.inputs[paddingYInputC].View()),
-		fmt.Sprintf("%v File name prefix: %s", valid[fileNameInputC], m.inputs[fileNameInputC].View()),
+		canvasPreview,
 		"",
 		promptText,
+	)
+}
+
+func (m createCanvasModel) previewCanvas() string {
+	var brailleCharsW int
+	var brailleCharsH int
+
+	if err := m.inputs[brailleWInputC].Err; err != nil {
+		brailleCharsW = 0
+	} else {
+		brailleCharsW, _ = strconv.Atoi(m.inputs[brailleWInputC].Value())
 	}
-	return strings.Join(result[:], "\n")
+
+	if err := m.inputs[brailleHInputC].Err; err != nil {
+		brailleCharsH = 0
+	} else {
+		brailleCharsH, _ = strconv.Atoi(m.inputs[brailleHInputC].Value())
+	}
+
+	if brailleCharsW == 0 && brailleCharsH == 0 {
+		return "xxxxx\nxxxxx\nxxxxx\nxxxxx\nxxxxx"
+	}
+
+	builder := strings.Builder{}
+
+	if brailleCharsW == 0 {
+		for range brailleCharsH - 1 {
+			builder.WriteRune('x')
+			builder.WriteRune('\n')
+		}
+
+		builder.WriteRune('x')
+		return builder.String()
+	}
+
+	if brailleCharsH == 0 {
+		for range brailleCharsW {
+			builder.WriteRune('x')
+		}
+
+		return builder.String()
+	}
+
+	{
+		for range brailleCharsH - 1 {
+			for range brailleCharsW {
+				builder.WriteRune('⣿')
+			}
+			builder.WriteRune('\n')
+		}
+
+		for range brailleCharsW {
+			builder.WriteRune('⣿')
+		}
+
+		return builder.String()
+	}
 }
 
 func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -285,6 +373,9 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if !m.showConfirmPrompt {
 				m.inputs[m.focused].Focus()
+
+				_value := m.inputs[m.focused].Value()
+				m.inputs[m.focused].SetValue(_value)
 			}
 		}
 
@@ -323,6 +414,8 @@ func (m createCanvasModel) createFile() error {
 		)
 	}
 
+	defer file.Close()
+
 	if err = m.inputs[brailleWInputC].Err; err != nil {
 		return fmt.Errorf("Invalid input on width: %v", err)
 	}
@@ -337,6 +430,10 @@ func (m createCanvasModel) createFile() error {
 
 	if err = m.inputs[paddingYInputC].Err; err != nil {
 		return fmt.Errorf("Invalid input on paddingY: %v", err)
+	}
+
+	if err = m.inputs[fileNameInputC].Err; err != nil {
+		return fmt.Errorf("Invalid input on file name prefix: %v", err)
 	}
 
 	brailleCharsW, _ := strconv.Atoi(m.inputs[brailleWInputC].Value())
