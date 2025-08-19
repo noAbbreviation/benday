@@ -152,7 +152,7 @@ func (m *previewArtModel) GetPixels() updateMsg {
 	}
 
 	brailleW := imageWidth / (BRAILLE_WIDTH + paddingX)
-	brailleH := imageHeight / (BRAILLE_WIDTH + paddingY)
+	brailleH := imageHeight / (BRAILLE_HEIGHT + paddingY)
 
 	pixels := make([][]rune, brailleH)
 	for y := range pixels {
