@@ -5,3 +5,10 @@ Seamless workflow CLI application for creating, viewing and modifying braille AS
 ## TODO
 
 - [x] Look at the `lipgloss` package for coloring and alignments
+- RequestWindowSize() could be cool to do
+
+## Future stuff
+
+-Preview enhancements:
+
+- Limit the canvas viewport size (tweakable, movable)

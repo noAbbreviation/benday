@@ -46,14 +46,10 @@ func (err InvalidImgDimensionE) Error() string {
 
 type previewArtModel struct {
 	fileName string
+	err      error
 
-	pixels   [][]rune
-	isPadded bool
-
-	brailleWidthC  int
-	brailleHeightC int
-	paddingX       int
-	paddingY       int
+	watchTicker bool
+	pixels      [][]rune
 
 	rOpts resizeOptionStore
 }
@@ -95,8 +91,6 @@ func (m *previewArtModel) GetPixels() updateMsg {
 	if dotChars < 3 {
 		return updateMsg{InvalidFileNameError, nil}
 	}
-
-	//  TODO: check for file's modTime() to be less redundant
 
 	fileNameInfo := strings.Split(m.fileName, ".")
 	slices.Reverse(fileNameInfo)
@@ -151,6 +145,9 @@ func (m *previewArtModel) GetPixels() updateMsg {
 		return updateMsg{err, nil}
 	}
 
+	// TODO: Check if unpadded
+	// TODO: Check if divisible checks both fail, combine if ever
+
 	brailleW := imageWidth / (BRAILLE_WIDTH + paddingX)
 	brailleH := imageHeight / (BRAILLE_HEIGHT + paddingY)
 
@@ -175,10 +172,7 @@ func (m *previewArtModel) GetPixels() updateMsg {
 				}
 			}
 
-			brailleIdx, err := strconv.ParseUint(string(bitRep), 2, 8)
-			if err != nil {
-				return updateMsg{err, nil}
-			}
+			brailleIdx, _ := strconv.ParseUint(string(bitRep), 2, 8)
 
 			charX := bigXOff / (BRAILLE_WIDTH + paddingX)
 			charY := bigYOff / (BRAILLE_HEIGHT + paddingY)
@@ -213,10 +207,11 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case updateMsg:
-		if err := msg.err; err != nil {
-			//  TODO: Store and show error
-			fmt.Printf("Error occured on parsing file: %v\n", err)
-			os.Exit(1)
+		m.watchTicker = !m.watchTicker
+		m.err = msg.err
+
+		if msgErr := msg.err; msgErr != nil {
+			return m, m.Tick()
 		}
 
 		m.pixels = msg.pixels
@@ -258,5 +253,12 @@ func (m *previewArtModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Center, renderedPixels, watchTickerView, "")
 	}
 
-	return bordered.Render(builder.String()) + "\n"
+	watchTickerView = "_ watching (invalid) file /"
+	if !m.watchTicker {
+		watchTickerView = "\\ watching (invalid) file _"
+	}
+
+	errorPrompt := fmt.Sprintf("Error processing the file:\n%v", m.err)
+	watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, "", watchTickerView)
+	return lipgloss.JoinVertical(lipgloss.Left, watchView, "", errorPrompt, "")
 }
