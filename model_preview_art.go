@@ -17,12 +17,16 @@ import (
 )
 
 var (
-	InvalidFileNameError = errors.New("Invalid file name. File must end in the form \"*.<pX>x<pY>.by.png\".")
+	InvalidFileNameError = decodeError{
+		errors.New("Invalid file name. File must end in the form \"*.<pX>x<pY>.by.png\"."),
+	}
 
 	alphaThreshold = 0xff / 3
 )
 
-var ()
+type decodeError struct {
+	error
+}
 
 type InvalidImgDimensionE struct {
 	measure           int
@@ -71,7 +75,9 @@ func newPreviewArtModel(fileName string) *previewArtModel {
 }
 
 func (m *previewArtModel) Init() tea.Cmd {
-	return m.Tick()
+	return func() tea.Msg {
+		return m.GetPixels()
+	}
 }
 
 func (m *previewArtModel) Tick() tea.Cmd {
@@ -123,13 +129,17 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 
 	file, err := os.Open(m.fileName)
 	if err != nil {
-		return updatePreviewMsg{fmt.Errorf("Error opening the file: %v", err), nil}
+		return updatePreviewMsg{
+			decodeError{fmt.Errorf("Error opening the file: %w", err)}, nil,
+		}
 	}
 	defer file.Close()
 
 	img, err := png.Decode(file)
 	if err != nil {
-		return updatePreviewMsg{fmt.Errorf("Error reading the image: %v", err), nil}
+		return updatePreviewMsg{
+			decodeError{fmt.Errorf("Error reading the image: %w", err)}, nil,
+		}
 	}
 
 	bounds := img.Bounds().Max
@@ -211,11 +221,17 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.watchTicker = !m.watchTicker
 		m.err = msg.err
 
-		if msg.err != nil {
-			return m, m.Tick()
+		if _, shouldPanic := msg.err.(decodeError); shouldPanic {
+			panicMsg := panicMsgModel(
+				fmt.Sprintf("Filename: %v\n%v", m.fileName, msg.err),
+			)
+			return panicMsg, tea.Quit
 		}
 
-		m.pixels = msg.pixels
+		if msg.err == nil {
+			m.pixels = msg.pixels
+		}
+
 		return m, m.Tick()
 
 	case tea.KeyMsg:
@@ -252,7 +268,8 @@ func (m *previewArtModel) View() string {
 	}
 
 	if m.err == nil {
-		return lipgloss.JoinVertical(lipgloss.Center, renderedPixels, watchTickerView, "")
+		watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, watchTickerView, "")
+		return lipgloss.JoinVertical(lipgloss.Left, "", m.fileName, watchView)
 	}
 
 	watchTickerView = "_ watching (invalid) file /"
@@ -262,5 +279,6 @@ func (m *previewArtModel) View() string {
 
 	errorPrompt := fmt.Sprintf("Error processing the file:\n%v", m.err)
 	watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, "", watchTickerView)
-	return lipgloss.JoinVertical(lipgloss.Left, watchView, "", errorPrompt, "")
+
+	return lipgloss.JoinVertical(lipgloss.Left, m.fileName, watchView, "", errorPrompt, "")
 }
