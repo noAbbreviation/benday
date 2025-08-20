@@ -335,7 +335,8 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				return m, tea.Quit
+				previewModel := newPreviewArtModel(m.fileName())
+				return previewModel, previewModel.Init()
 			case "b":
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()

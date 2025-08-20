@@ -18,13 +18,7 @@ func main() {
 
 	if len(os.Args) >= 2 {
 		fileName := os.Args[1]
-		previewModel, err := newPreviewArtModel(fileName)
-		if err != nil {
-			fmt.Printf("Error parsing the file: %v\n", err)
-			os.Exit(1)
-		}
-
-		model = previewModel
+		model = newPreviewArtModel(fileName)
 	}
 
 	p := tea.NewProgram(model)

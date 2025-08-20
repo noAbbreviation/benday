@@ -60,13 +60,14 @@ type resizeOptionStore struct {
 	inputs            *[2]textinput.Model
 }
 
-func newPreviewArtModel(fileName string) (*previewArtModel, error) {
+func newPreviewArtModel(fileName string) *previewArtModel {
 	newModel := &previewArtModel{fileName: fileName}
-	if msg := newModel.GetPixels(); msg.err != nil {
-		return nil, msg.err
-	}
+	pixelData := newModel.GetPixels()
 
-	return newModel, nil
+	newModel.pixels = pixelData.pixels
+	newModel.err = pixelData.err
+
+	return newModel
 }
 
 func (m *previewArtModel) Init() tea.Cmd {
@@ -79,56 +80,56 @@ func (m *previewArtModel) Tick() tea.Cmd {
 	})
 }
 
-type updateMsg struct {
+type updatePreviewMsg struct {
 	err    error
 	pixels [][]rune
 }
 
 // TODO: Clean options: restore unshaded, non-comment pixels
 
-func (m *previewArtModel) GetPixels() updateMsg {
+func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	dotChars := strings.Count(m.fileName, ".")
 	if dotChars < 3 {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	fileNameInfo := strings.Split(m.fileName, ".")
 	slices.Reverse(fileNameInfo)
 
 	if imgExtension := fileNameInfo[0]; imgExtension != "png" {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	if hasBy := fileNameInfo[1] == "by"; !hasBy {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	paddingSpec := fileNameInfo[2]
 	if strings.Count(paddingSpec, "x") != 1 {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	paddingSpecSplit := strings.Split(paddingSpec, "x")
 
 	paddingX, err := strconv.Atoi(paddingSpecSplit[0])
 	if err != nil {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	paddingY, err := strconv.Atoi(paddingSpecSplit[1])
 	if err != nil {
-		return updateMsg{InvalidFileNameError, nil}
+		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	file, err := os.Open(m.fileName)
 	if err != nil {
-		return updateMsg{fmt.Errorf("Error opening the file: %v", err), nil}
+		return updatePreviewMsg{fmt.Errorf("Error opening the file: %v", err), nil}
 	}
 	defer file.Close()
 
 	img, err := png.Decode(file)
 	if err != nil {
-		return updateMsg{fmt.Errorf("Error reading the image: %v", err), nil}
+		return updatePreviewMsg{fmt.Errorf("Error reading the image: %v", err), nil}
 	}
 
 	bounds := img.Bounds().Max
@@ -137,12 +138,12 @@ func (m *previewArtModel) GetPixels() updateMsg {
 
 	if imageWidth%(BRAILLE_WIDTH+paddingX) != 0 {
 		err = InvalidImgDimensionE{imageWidth, BRAILLE_WIDTH + paddingX, true}
-		return updateMsg{err, nil}
+		return updatePreviewMsg{err, nil}
 	}
 
 	if imageHeight%(BRAILLE_HEIGHT+paddingY) != 0 {
 		err = InvalidImgDimensionE{imageHeight, BRAILLE_HEIGHT + paddingY, false}
-		return updateMsg{err, nil}
+		return updatePreviewMsg{err, nil}
 	}
 
 	// TODO: Check if unpadded
@@ -182,7 +183,7 @@ func (m *previewArtModel) GetPixels() updateMsg {
 		}
 	}
 
-	return updateMsg{nil, pixels}
+	return updatePreviewMsg{nil, pixels}
 }
 
 func isShaded(c color.Color) bool {
@@ -206,16 +207,17 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case updateMsg:
+	case updatePreviewMsg:
 		m.watchTicker = !m.watchTicker
 		m.err = msg.err
 
-		if msgErr := msg.err; msgErr != nil {
+		if msg.err != nil {
 			return m, m.Tick()
 		}
 
 		m.pixels = msg.pixels
 		return m, m.Tick()
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "r":
