@@ -409,6 +409,7 @@ func (m *createCanvasModel) nextItem() {
 func (m createCanvasModel) createFile() error {
 	fileName := m.fileName()
 
+	// TODO: Check for if the file exists already
 	file, err := os.Create(fileName)
 	if err != nil {
 		return fmt.Errorf(
