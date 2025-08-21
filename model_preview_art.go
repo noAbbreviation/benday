@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"os"
 	"slices"
@@ -219,16 +220,16 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	return updatePreviewMsg{nil, pixels}
 }
 
-func (m *previewArtModel) modifyPaddingState(unpadded bool) error {
-	rFile, err := os.Open(m.fileName)
+func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, paddingY int) (error, bool) {
+	rFile, err := os.Open(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{err}, currentlyUnpadded
 	}
 
 	oldImage, err := png.Decode(rFile)
 	if err != nil {
 		rFile.Close()
-		return decodeError{err}
+		return decodeError{err}, currentlyUnpadded
 	}
 	rFile.Close()
 
@@ -238,56 +239,52 @@ func (m *previewArtModel) modifyPaddingState(unpadded bool) error {
 
 	type bDimension struct{ w, h int }
 
-	braillePaddedW := (BRAILLE_WIDTH + m.paddingX)
-	braillePaddedH := (BRAILLE_HEIGHT + m.paddingY)
+	braillePaddedW := BRAILLE_WIDTH + paddingX
+	braillePaddedH := BRAILLE_HEIGHT + paddingY
 
-	beforeToggle := bDimension{braillePaddedW, braillePaddedH}
-	afterToggle := bDimension{BRAILLE_WIDTH, BRAILLE_HEIGHT}
+	beforeMeasure := bDimension{braillePaddedW, braillePaddedH}
+	afterMeasure := bDimension{BRAILLE_WIDTH, BRAILLE_HEIGHT}
 
-	if m.unpadded {
-		beforeToggle, afterToggle = afterToggle, beforeToggle
+	if currentlyUnpadded {
+		beforeMeasure, afterMeasure = afterMeasure, beforeMeasure
 	}
 
-	if oldImageWidth%(beforeToggle.w) != 0 {
-		return InvalidImgDimensionE{oldImageWidth, beforeToggle.w, true}
+	if oldImageWidth%(beforeMeasure.w) != 0 {
+		return InvalidImgDimensionE{oldImageWidth, beforeMeasure.w, true}, currentlyUnpadded
 	}
 
-	if oldImageHeight%(beforeToggle.h) != 0 {
-		return InvalidImgDimensionE{oldImageHeight, beforeToggle.h, false}
+	if oldImageHeight%(beforeMeasure.h) != 0 {
+		return InvalidImgDimensionE{oldImageHeight, beforeMeasure.h, false}, currentlyUnpadded
 	}
 
-	if m.unpadded == unpadded {
-		return nil
-	}
-
-	stats, err := os.Stat(m.fileName)
+	stats, err := os.Stat(fileName)
 	if err != nil {
-		return err
+		return err, currentlyUnpadded
 	}
 
 	if time.Since(stats.ModTime()) < time.Second {
-		return silentError{err}
+		return silentError{err}, currentlyUnpadded
 	}
 
-	charsX := oldImageWidth / beforeToggle.w
-	charsY := oldImageHeight / beforeToggle.h
+	charsX := oldImageWidth / beforeMeasure.w
+	charsY := oldImageHeight / beforeMeasure.h
 
-	wFile, err := os.Create(m.fileName)
+	wFile, err := os.Create(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{err}, currentlyUnpadded
 	}
 
-	newImage := image.NewNRGBA(image.Rect(0, 0, charsX*afterToggle.w, charsY*afterToggle.h))
+	newImage := draw.Image(image.NewNRGBA(image.Rect(0, 0, charsX*afterMeasure.w, charsY*afterMeasure.h)))
 
 	for charY := range charsY {
 		for charX := range charsX {
 			for brailleYOff := range BRAILLE_HEIGHT {
 				for brailleXOff := range BRAILLE_WIDTH {
-					beforeX := charX*beforeToggle.w + brailleXOff
-					beforeY := charY*beforeToggle.h + brailleYOff
+					beforeX := charX*beforeMeasure.w + brailleXOff
+					beforeY := charY*beforeMeasure.h + brailleYOff
 
-					afterX := charX*afterToggle.w + brailleXOff
-					afterY := charY*afterToggle.h + brailleYOff
+					afterX := charX*afterMeasure.w + brailleXOff
+					afterY := charY*afterMeasure.h + brailleYOff
 
 					pxBefore := oldImage.At(beforeX, beforeY)
 					newImage.Set(afterX, afterY, pxBefore)
@@ -296,35 +293,12 @@ func (m *previewArtModel) modifyPaddingState(unpadded bool) error {
 		}
 	}
 
-	if unpadded {
-		err := png.Encode(wFile, newImage)
-		return err
-	}
-
-	for charY := range charsY {
-		for charX := range charsX {
-			for paddingYOff := range m.paddingY {
-				for brailleXOff := range BRAILLE_WIDTH {
-					x := brailleXOff + charX*afterToggle.w
-					y := BRAILLE_HEIGHT + paddingYOff + charY*afterToggle.h
-
-					newImage.Set(x, y, color.Transparent)
-				}
-			}
-
-			for paddingXOff := range m.paddingX {
-				for brailleYOff := range BRAILLE_HEIGHT {
-					x := BRAILLE_WIDTH + paddingXOff + charX*afterToggle.w
-					y := brailleYOff + charY*afterToggle.h
-
-					newImage.Set(x, y, color.Transparent)
-				}
-			}
-		}
+	if currentlyUnpadded {
+		newImage = drawPadding(newImage, paddingX, paddingY)
 	}
 
 	err = png.Encode(wFile, newImage)
-	return err
+	return err, !currentlyUnpadded
 }
 
 func isShaded(c color.Color) bool {
@@ -374,7 +348,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			m.err = m.modifyPaddingState(!m.unpadded)
+			m.err, m.unpadded = togglePaddingState(m.fileName, m.unpadded, m.paddingX, m.paddingY)
 			if m.err != nil {
 				if _, isSilent := m.err.(silentError); isSilent {
 					return m, nil
@@ -384,7 +358,6 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return panicMsgModel(m.err.Error()), nil
 			}
 
-			m.unpadded = !m.unpadded
 			return m, nil
 		}
 	}
