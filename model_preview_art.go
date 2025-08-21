@@ -22,8 +22,6 @@ var (
 	InvalidFileNameError = decodeError{
 		errors.New("Invalid file name. File must end in the form \"*.<pX>x<pY>.by.png\"."),
 	}
-
-	alphaThreshold = 0xff / 3
 )
 
 type decodeError struct {
@@ -174,7 +172,6 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 		}
 	}
 
-	// TODO: Check if divisible checks both fail, combine if ever
 	brailleWithPaddingW := (BRAILLE_WIDTH + paddingX)
 	brailleWithPaddingH := (BRAILLE_HEIGHT + paddingY)
 
@@ -301,15 +298,31 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 	return err, !currentlyUnpadded
 }
 
+// This ignores sufficiently translucent, non-grayscale, and light colors.
 func isShaded(c color.Color) bool {
 	pxColor := color.NRGBAModel.Convert(c).(color.NRGBA)
-	if int(pxColor.A) < alphaThreshold {
+	r, g, b, a := uint32(pxColor.R), uint32(pxColor.G), uint32(pxColor.B), uint32(pxColor.A)
+
+	if 3*a < 0xff {
+		return false
+	}
+
+	// Derivation of "deviation":
+	// deviation = (abs(r, g) + abs(g, b) + abs(r, b)) / 3
+	// deviation = (r-g + g-b + r-b) / 3       (without loss of generality: r >= g >= b)
+	// deviation = 2 * (r-b) / 3
+	// deviation = 2 * (maximum(r, g, b) - minimum(r, g, b)) / 3
+	// (then multiplied the divisor to the other side)
+
+	// Originally as:
+	// `if deviation := (abs(r - g) + abs(g - b) + abs(r - b)) / 3; deviation > 0xff/16 { ... }`
+	if deviation := 2 * (max(r, g, b) - min(r, g, b)); 16*deviation > 3*0xff {
 		return false
 	}
 
 	// 3 color channels * 2/3 brightness = 2 multiplier to alpha
-	sumOfColors := int32(pxColor.R) + int32(pxColor.G) + int32(pxColor.B)
-	return sumOfColors < 2*int32(pxColor.A)
+	sumOfColors := r + g + b
+	return sumOfColors < 2*a
 }
 
 func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
