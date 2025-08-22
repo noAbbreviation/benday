@@ -8,7 +8,6 @@ import (
 	"image/draw"
 	"image/png"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -52,6 +51,7 @@ func (err InvalidImgDimensionE) Error() string {
 	)
 }
 
+// TODO: Block updates when file operation is in place (using atomic.Bool)
 type previewArtModel struct {
 	fileName string
 	err      error
@@ -98,8 +98,6 @@ type updatePreviewMsg struct {
 	pixels [][]rune
 }
 
-// TODO: Clean options: restore unshaded, non-comment pixels
-
 func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	dotChars := strings.Count(m.fileName, ".")
 	if dotChars < 3 {
@@ -107,7 +105,17 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	}
 
 	fileNameInfo := strings.Split(m.fileName, ".")
-	slices.Reverse(fileNameInfo)
+	{
+		start := 0
+		end := len(fileNameInfo) - 1
+
+		for start < end {
+			fileNameInfo[start], fileNameInfo[end] = fileNameInfo[end], fileNameInfo[start]
+
+			start += 1
+			end -= 1
+		}
+	}
 
 	if imgExtension := fileNameInfo[0]; imgExtension != "png" {
 		return updatePreviewMsg{InvalidFileNameError, nil}
@@ -143,9 +151,10 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 			decodeError{fmt.Errorf("Error opening the file: %w", err)}, nil,
 		}
 	}
-	defer file.Close()
 
 	img, err := png.Decode(file)
+	file.Close()
+
 	if err != nil {
 		return updatePreviewMsg{
 			decodeError{fmt.Errorf("Error reading the image: %w", err)}, nil,
@@ -157,8 +166,7 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	imageHeight := bounds.Y
 
 	m.unpadded = imageWidth%(BRAILLE_WIDTH) == 0 &&
-		imageHeight%(BRAILLE_HEIGHT) == 0 &&
-		!isShaded(img.At(imageWidth, imageHeight))
+		imageHeight%(BRAILLE_HEIGHT) == 0
 
 	if !m.unpadded {
 		if imageWidth%(BRAILLE_WIDTH+paddingX) != 0 {
@@ -196,7 +204,7 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 					x := bigXOff + charXOff
 					y := bigYOff + charYOff
 
-					if isShaded(img.At(x, y)) {
+					if shadeType(img.At(x, y)) == colorShaded {
 						bitRep = append(bitRep, '1')
 					} else {
 						bitRep = append(bitRep, '0')
@@ -218,17 +226,26 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 }
 
 func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, paddingY int) (error, bool) {
+	fileStats, err := os.Stat(fileName)
+	if err != nil {
+		return decodeError{err}, currentlyUnpadded
+	}
+
+	if time.Since(fileStats.ModTime()) < time.Second {
+		return silentError{err}, currentlyUnpadded
+	}
+
 	rFile, err := os.Open(fileName)
 	if err != nil {
 		return decodeError{err}, currentlyUnpadded
 	}
 
 	oldImage, err := png.Decode(rFile)
+	rFile.Close()
+
 	if err != nil {
-		rFile.Close()
 		return decodeError{err}, currentlyUnpadded
 	}
-	rFile.Close()
 
 	bounds := oldImage.Bounds().Max
 	oldImageWidth := bounds.X
@@ -254,22 +271,8 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 		return InvalidImgDimensionE{oldImageHeight, beforeMeasure.h, false}, currentlyUnpadded
 	}
 
-	stats, err := os.Stat(fileName)
-	if err != nil {
-		return err, currentlyUnpadded
-	}
-
-	if time.Since(stats.ModTime()) < time.Second {
-		return silentError{err}, currentlyUnpadded
-	}
-
 	charsX := oldImageWidth / beforeMeasure.w
 	charsY := oldImageHeight / beforeMeasure.h
-
-	wFile, err := os.Create(fileName)
-	if err != nil {
-		return decodeError{err}, currentlyUnpadded
-	}
 
 	newImage := draw.Image(image.NewNRGBA(image.Rect(0, 0, charsX*afterMeasure.w, charsY*afterMeasure.h)))
 
@@ -294,17 +297,31 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 		newImage = drawPadding(newImage, paddingX, paddingY)
 	}
 
-	err = png.Encode(wFile, newImage)
-	return err, !currentlyUnpadded
+	wFile, err := os.Create(fileName)
+	if err != nil {
+		return decodeError{err}, currentlyUnpadded
+	}
+
+	encodeError := png.Encode(wFile, newImage)
+	return encodeError, !currentlyUnpadded
 }
 
+type shadedType int
+
+const (
+	colorTransparent shadedType = iota
+	colorNonGrayscale
+	colorNonShaded
+	colorShaded
+)
+
 // This ignores sufficiently translucent, non-grayscale, and light colors.
-func isShaded(c color.Color) bool {
+func shadeType(c color.Color) shadedType {
 	pxColor := color.NRGBAModel.Convert(c).(color.NRGBA)
 	r, g, b, a := uint32(pxColor.R), uint32(pxColor.G), uint32(pxColor.B), uint32(pxColor.A)
 
 	if 3*a < 0xff {
-		return false
+		return colorTransparent
 	}
 
 	// Derivation of "deviation":
@@ -317,12 +334,100 @@ func isShaded(c color.Color) bool {
 	// Originally as:
 	// `if deviation := (abs(r - g) + abs(g - b) + abs(r - b)) / 3; deviation > 0xff/16 { ... }`
 	if deviation := 2 * (max(r, g, b) - min(r, g, b)); 16*deviation > 3*0xff {
-		return false
+		return colorNonGrayscale
 	}
 
 	// 3 color channels * 2/3 brightness = 2 multiplier to alpha
 	sumOfColors := r + g + b
-	return sumOfColors < 2*a
+	if sumOfColors < 2*a {
+		return colorShaded
+	} else {
+		return colorNonShaded
+	}
+}
+
+func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, removeNonGrayscale bool) error {
+	fileStats, err := os.Stat(fileName)
+	if err != nil {
+		return decodeError{err}
+	}
+
+	if time.Since(fileStats.ModTime()) < time.Second {
+		return silentError{err}
+	}
+
+	file, err := os.Open(fileName)
+	if err != nil {
+		return decodeError{err}
+	}
+
+	img, err := png.Decode(file)
+	file.Close()
+
+	if err != nil {
+		return decodeError{err}
+	}
+
+	bounds := img.Bounds().Max
+	imageWidth := bounds.X
+	imageHeight := bounds.Y
+
+	braillePaddedW := BRAILLE_WIDTH + paddingX
+	braillePaddedH := BRAILLE_HEIGHT + paddingY
+
+	if isUnpadded {
+		braillePaddedW = BRAILLE_WIDTH
+		braillePaddedH = BRAILLE_HEIGHT
+	}
+
+	newImage := draw.Image(image.NewNRGBA(img.Bounds()))
+	draw.Draw(newImage, img.Bounds(), img, image.Point{}, draw.Src)
+
+	defaultCanvasImg := newCanvasImage(imageWidth, imageHeight, paddingX, paddingY, isUnpadded)
+	maskForDefault := image.NewAlpha16(img.Bounds())
+
+	for bigOffsetX := 0; bigOffsetX < imageWidth; bigOffsetX += braillePaddedW {
+		for bigOffsetY := 0; bigOffsetY < imageHeight; bigOffsetY += braillePaddedH {
+			for charX := range BRAILLE_WIDTH {
+				for charY := range BRAILLE_HEIGHT {
+					x := bigOffsetX + charX
+					y := bigOffsetY + charY
+
+					shade := shadeType(newImage.At(x, y))
+
+					if shade == colorShaded {
+						colorBlack := color.NRGBA{0, 0, 0, 0xff}
+						newImage.Set(x, y, colorBlack)
+
+						continue
+					}
+
+					if removeNonGrayscale {
+						maskForDefault.Set(x, y, color.Opaque)
+						continue
+					}
+
+					if shade != colorNonGrayscale {
+						maskForDefault.Set(x, y, color.Opaque)
+					}
+				}
+			}
+		}
+	}
+
+	draw.DrawMask(newImage, img.Bounds(), defaultCanvasImg, image.Point{}, maskForDefault, image.Point{}, draw.Over)
+
+	if !isUnpadded {
+		newImage = drawPadding(newImage, paddingX, paddingY)
+	}
+
+	file, err = os.Create(fileName)
+	if err != nil {
+		return err
+	}
+
+	encodeError := png.Encode(file, newImage)
+	return encodeError
 }
 
 func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -356,6 +461,24 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "r":
 			//  TODO: resize operation
+		case "c", "C":
+			if m.err != nil {
+				return m, nil
+			}
+
+			removeNonGrayscaleColors := msg.String() == "C"
+
+			m.err = cleanCanvas(m.fileName, m.unpadded, m.paddingX, m.paddingY, removeNonGrayscaleColors)
+			if m.err != nil {
+				if _, isSilent := m.err.(silentError); isSilent {
+					return m, nil
+				}
+
+				return panicMsgModel(m.err.Error()), nil
+			}
+
+			return m, nil
+			// TODO: update here after stopping updates on file opts
 		case "t":
 			if m.err != nil {
 				return m, nil
@@ -367,11 +490,11 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				// TODO: Maybe create a panic message here?
 				return panicMsgModel(m.err.Error()), nil
 			}
 
 			return m, nil
+			// TODO: update here after stopping updates on file opts
 		}
 	}
 
@@ -408,7 +531,7 @@ func (m *previewArtModel) View() string {
 			"",
 			m.fileName,
 			watchView,
-			"(t to toggle padding)",
+			"(t to toggle padding, c/C to clean canvas)",
 			fmt.Sprintf("unpadded?: %v, padding:(%v,%v)", m.unpadded, m.paddingX, m.paddingY),
 		)
 	}

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -428,6 +427,13 @@ func (m createCanvasModel) createFile() error {
 	imageWidth := brailleCharsW * (paddingX + BRAILLE_WIDTH)
 	imageHeight := brailleCharsH * (paddingY + BRAILLE_HEIGHT)
 
+	img := newCanvasImage(imageWidth, imageHeight, paddingX, paddingY, false)
+
+	encodeErr := png.Encode(file, img)
+	return encodeErr
+}
+
+func newCanvasImage(imageWidth int, imageHeight int, paddingX int, paddingY int, unpadded bool) draw.Image {
 	whiteImage := image.Uniform{color.NRGBA{0xff, 0xff, 0xff, 0xff}}
 
 	img := image.NewNRGBA(image.Rect(0, 0, imageWidth, imageHeight))
@@ -436,19 +442,27 @@ func (m createCanvasModel) createFile() error {
 	colorGray := color.NRGBA{R: 0xcc, G: 0xcc, B: 0xcc, A: 0xff}
 	paintWhiteStart := true
 
-	for bigYOff := 0; bigYOff < imageHeight; bigYOff += paddingY + BRAILLE_HEIGHT {
+	braillePaddedW := paddingX + BRAILLE_WIDTH
+	braillePaddedH := paddingY + BRAILLE_HEIGHT
+
+	if unpadded {
+		braillePaddedW = BRAILLE_WIDTH
+		braillePaddedH = BRAILLE_HEIGHT
+	}
+
+	for bigYOff := 0; bigYOff < imageHeight; bigYOff += braillePaddedH {
 		grayPainterOffsetX := 0
 		if paintWhiteStart {
-			grayPainterOffsetX += paddingX + BRAILLE_WIDTH
+			grayPainterOffsetX += braillePaddedW
 		}
 
-		for bigXOff := grayPainterOffsetX; bigXOff < imageWidth; bigXOff += 2 * (paddingX + BRAILLE_WIDTH) {
+		for bigXOff := grayPainterOffsetX; bigXOff < imageWidth; bigXOff += 2 * braillePaddedW {
 			for charYOff := 0; charYOff < BRAILLE_HEIGHT; charYOff += 1 {
 				for charXOff := 0; charXOff < BRAILLE_WIDTH; charXOff += 1 {
 					x := bigXOff + charXOff
 					y := bigYOff + charYOff
 
-					img.SetNRGBA(x, y, colorGray)
+					img.Set(x, y, colorGray)
 				}
 			}
 		}
@@ -456,14 +470,12 @@ func (m createCanvasModel) createFile() error {
 		paintWhiteStart = !paintWhiteStart
 	}
 
-	paddedImg := drawPadding(img, paddingX, paddingY).(image.Image)
-	err = png.Encode(io.Writer(file), paddedImg)
-
-	if err != nil {
-		return err
+	finalImage := draw.Image(img)
+	if !unpadded {
+		finalImage = drawPadding(finalImage, paddingX, paddingY)
 	}
 
-	return nil
+	return finalImage
 }
 
 func drawPadding(img draw.Image, paddingX int, paddingY int) draw.Image {
@@ -474,13 +486,13 @@ func drawPadding(img draw.Image, paddingX int, paddingY int) draw.Image {
 	charsX := bounds.X / braillePaddedW
 	charsY := bounds.Y / braillePaddedH
 
-	transparentImg := image.Uniform{color.NRGBA{}}
+	transparentImg := image.NewUniform(color.NRGBA{})
 	if paddingY > 0 {
 		paddingAreaY := image.Rect(0, 0, bounds.X, paddingY)
 
 		for charY := range charsY {
 			translatorP := image.Point{0, charY*braillePaddedH + BRAILLE_HEIGHT}
-			draw.Draw(img, paddingAreaY.Add(translatorP), &transparentImg, image.Point{}, draw.Src)
+			draw.Draw(img, paddingAreaY.Add(translatorP), transparentImg, image.Point{}, draw.Src)
 		}
 	}
 
@@ -489,7 +501,7 @@ func drawPadding(img draw.Image, paddingX int, paddingY int) draw.Image {
 
 		for charX := range charsX {
 			translatorP := image.Point{charX*braillePaddedW + BRAILLE_WIDTH, 0}
-			draw.Draw(img, paddingAreaX.Add(translatorP), &transparentImg, image.Point{}, draw.Src)
+			draw.Draw(img, paddingAreaX.Add(translatorP), transparentImg, image.Point{}, draw.Src)
 		}
 	}
 
