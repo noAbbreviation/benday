@@ -458,45 +458,10 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			toResizeIdx = 1
 		}
 
-		var charsX, charsY int
-		{
-			file, err := os.Open(m.fileName)
-			if err != nil {
-				m.err = decodeError{err}
-				return m, nil
-			}
-
-			imageConfig, err := png.DecodeConfig(file)
-			file.Close()
-
-			if err != nil {
-				m.err = decodeError{err}
-				return m, nil
-			}
-
-			braillePaddedW := BRAILLE_WIDTH + m.paddingX
-			braillePaddedH := BRAILLE_HEIGHT + m.paddingY
-
-			if m.unpadded {
-				braillePaddedW = BRAILLE_WIDTH
-				braillePaddedH = BRAILLE_HEIGHT
-			}
-
-			imageWidth := imageConfig.Width
-			imageHeight := imageConfig.Height
-
-			if imageWidth%(braillePaddedW) != 0 {
-				m.err = InvalidImgDimensionE{imageWidth, braillePaddedW, true}
-				return m, nil
-			}
-
-			if imageHeight%(braillePaddedH) != 0 {
-				m.err = InvalidImgDimensionE{imageHeight, braillePaddedH, false}
-				return m, nil
-			}
-
-			charsX = imageWidth / braillePaddedW
-			charsY = imageHeight / braillePaddedH
+		charsX, charsY, err := getCanvasCharDimension(m.fileName, m.paddingX, m.paddingY, m.unpadded)
+		if err != nil {
+			m.err = err
+			return m, nil
 		}
 
 		if msg, isKey := msg.(tea.KeyMsg); isKey {
@@ -617,22 +582,132 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-var previewBorder = lipgloss.NewStyle().Border(lipgloss.InnerHalfBlockBorder())
+func getCanvasCharDimension(fileName string, paddingX int, paddingY int, isUnpadded bool) (int, int, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return 0, 0, decodeError{err}
+	}
+
+	imageConfig, err := png.DecodeConfig(file)
+	file.Close()
+
+	if err != nil {
+		return 0, 0, decodeError{err}
+	}
+
+	braillePaddedW := BRAILLE_WIDTH + paddingX
+	braillePaddedH := BRAILLE_HEIGHT + paddingY
+
+	if isUnpadded {
+		braillePaddedW = BRAILLE_WIDTH
+		braillePaddedH = BRAILLE_HEIGHT
+	}
+
+	imageWidth := imageConfig.Width
+	imageHeight := imageConfig.Height
+
+	if imageWidth%(braillePaddedW) != 0 {
+		err = InvalidImgDimensionE{imageWidth, braillePaddedW, true}
+		return 0, 0, err
+	}
+
+	if imageHeight%(braillePaddedH) != 0 {
+		err = InvalidImgDimensionE{imageHeight, braillePaddedH, false}
+		return 0, 0, err
+	}
+
+	charsX := imageWidth / braillePaddedW
+	charsY := imageHeight / braillePaddedH
+
+	return charsX, charsY, nil
+}
+
+var (
+	previewBorder      = lipgloss.NewStyle().Border(lipgloss.InnerHalfBlockBorder())
+	whiteSpaceWithX    = lipgloss.WithWhitespaceChars("x")
+	whiteSpaceWithPlus = lipgloss.WithWhitespaceChars("+")
+
+	erroredCanvas = "xxxxx\nxxxxx\nxxxxx\nxxxxx\nxxxxx"
+)
 
 func (m *previewArtModel) View() string {
 	renderedPixels := func() string {
 		if len(m.pixels) == 0 {
-			return "xxxxx\nxxxxx\nxxxxx\nxxxxx\nxxxxx"
+			return erroredCanvas
+		}
+
+		if !m.rOpts.resizing {
+			builder := strings.Builder{}
+			builder.WriteString(string(m.pixels[0]))
+
+			for _, line := range m.pixels[1:] {
+				builder.WriteRune('\n')
+				builder.WriteString(string(line))
+			}
+
+			return previewBorder.Render(builder.String())
+		}
+
+		charsX, charsY, err := getCanvasCharDimension(m.fileName, m.paddingX, m.paddingY, m.unpadded)
+		if err != nil {
+			return erroredCanvas
+		}
+
+		newCharsX := m.rOpts.inputs[0] + charsX
+		newCharsY := m.rOpts.inputs[1] + charsY
+
+		renderedDimensionX := min(newCharsX, charsX)
+		renderedDimensionY := min(newCharsY, charsY)
+
+		whiteSpaceStyleX := whiteSpaceWithPlus
+		whiteSpaceStyleY := whiteSpaceWithPlus
+
+		if newCharsX < charsX {
+			whiteSpaceStyleX = whiteSpaceWithX
+		}
+
+		if newCharsY < charsY {
+			whiteSpaceStyleY = whiteSpaceWithX
 		}
 
 		builder := strings.Builder{}
-		builder.WriteString(string(m.pixels[0]))
+		builder.WriteString(string(m.pixels[0][:renderedDimensionX]))
 
-		for _, line := range m.pixels[1:] {
+		for _, line := range m.pixels[1:renderedDimensionY] {
 			builder.WriteRune('\n')
-			builder.WriteString(string(line))
+			builder.WriteString(string(line[:renderedDimensionX]))
 		}
-		return previewBorder.Render(builder.String())
+
+		renderedCanvas := builder.String()
+		if newCharsX > charsX {
+			renderedCanvas = lipgloss.PlaceHorizontal(
+				max(newCharsX, charsX),
+				lipgloss.Left,
+				renderedCanvas,
+				whiteSpaceStyleX,
+			)
+			renderedCanvas = lipgloss.PlaceVertical(
+				max(newCharsY, charsY),
+				lipgloss.Top,
+				renderedCanvas,
+				whiteSpaceStyleY,
+			)
+		} else {
+			renderedCanvas = lipgloss.PlaceVertical(
+				max(newCharsY, charsY),
+				lipgloss.Top,
+				renderedCanvas,
+				whiteSpaceStyleY,
+			)
+			renderedCanvas = lipgloss.PlaceHorizontal(
+				max(newCharsX, charsX),
+				lipgloss.Left,
+				renderedCanvas,
+				whiteSpaceStyleX,
+			)
+		}
+
+		return previewBorder.Render(renderedCanvas)
 	}()
 
 	watchTickerView := "_ watching file /"
@@ -641,8 +716,6 @@ func (m *previewArtModel) View() string {
 	}
 
 	if m.err == nil {
-		watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, watchTickerView, "")
-
 		notifMessage := ""
 		if notifTime := m.notifTime; !notifTime.IsZero() && time.Since(notifTime) < time.Millisecond*2_500 {
 			notifMessage = ", " + m.notifMessage
@@ -661,7 +734,9 @@ func (m *previewArtModel) View() string {
 			lipgloss.Left,
 			"",
 			m.fileName,
-			watchView,
+			renderedPixels,
+			watchTickerView,
+			"",
 			tooltipText,
 			fmt.Sprintf("unpadded?: %v%v", m.unpadded, notifMessage),
 		)
@@ -673,7 +748,14 @@ func (m *previewArtModel) View() string {
 	}
 
 	errorPrompt := fmt.Sprintf("Error processing the file:\n%v", m.err)
-	watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, "", watchTickerView)
-
-	return lipgloss.JoinVertical(lipgloss.Left, m.fileName, watchView, "", errorPrompt, "")
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.fileName,
+		renderedPixels,
+		"",
+		watchTickerView,
+		"",
+		errorPrompt,
+		"",
+	)
 }
