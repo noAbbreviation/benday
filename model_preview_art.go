@@ -174,6 +174,7 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 	imageWidth := bounds.X
 	imageHeight := bounds.Y
 
+	// TODO: Make padded images with extra +1 pixel padding to both dimensions
 	m.unpadded = imageWidth%(BRAILLE_WIDTH) == 0 &&
 		imageHeight%(BRAILLE_HEIGHT) == 0
 
@@ -482,9 +483,21 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 
 			case "enter":
+				resizeX := opts.inputs[0]
+				resizeY := opts.inputs[1]
+
 				m.fileWrite <- struct{}{}
-				// TODO: Resize operation here
+				m.err = resizeCanvas(m.fileName, m.paddingX, m.paddingY, m.unpadded, resizeX, resizeY)
 				<-m.fileWrite
+
+				if m.err != nil {
+					if _, isSilent := m.err.(silentError); isSilent {
+						m.err = nil
+						return m, nil
+					}
+
+					return panicMsgModel(m.err.Error()), nil
+				}
 
 				m.notifTime = time.Now()
 				m.notifMessage = "finished resizing the canvas!"
@@ -622,6 +635,66 @@ func getCanvasCharDimension(fileName string, paddingX int, paddingY int, isUnpad
 	return charsX, charsY, nil
 }
 
+func resizeCanvas(fileName string, paddingX int, paddingY int, isUnpadded bool, resizeX int, resizeY int) error {
+	if resizeX == 0 && resizeY == 0 {
+		return nil
+	}
+
+	file, err := os.Open(fileName)
+	if err != nil {
+		return decodeError{err}
+	}
+
+	oldImage, err := png.Decode(file)
+	file.Close()
+
+	if err != nil {
+		return decodeError{err}
+	}
+
+	bounds := oldImage.Bounds().Max
+	imageWidth := bounds.X
+	imageHeight := bounds.Y
+
+	braillePaddedW := BRAILLE_WIDTH + paddingX
+	braillePaddedH := BRAILLE_HEIGHT + paddingY
+
+	if isUnpadded {
+		braillePaddedW = BRAILLE_WIDTH
+		braillePaddedH = BRAILLE_HEIGHT
+	}
+
+	if imageWidth%(braillePaddedW) != 0 {
+		return InvalidImgDimensionE{imageWidth, braillePaddedW, true}
+	}
+
+	if imageHeight%(braillePaddedH) != 0 {
+		return InvalidImgDimensionE{imageHeight, braillePaddedH, false}
+	}
+
+	charsX := imageWidth / braillePaddedW
+	charsY := imageHeight / braillePaddedH
+
+	newCharsX := charsX + resizeX
+	newCharsY := charsY + resizeY
+
+	newImage := image.NewNRGBA(image.Rect(0, 0, newCharsX*braillePaddedW, newCharsY*braillePaddedH))
+	if resizeX > 0 || resizeY > 0 {
+		defaultCanvas := newCanvasImage(newImage.Bounds().Dx(), newImage.Bounds().Dy(), paddingX, paddingY, isUnpadded)
+		draw.Draw(newImage, newImage.Bounds(), defaultCanvas, image.Point{}, draw.Src)
+	}
+
+	draw.Draw(newImage, image.Rect(0, 0, min(charsX, newCharsX)*braillePaddedW, min(charsY, newCharsY)*braillePaddedH), oldImage, image.Point{}, draw.Src)
+
+	file, err = os.Create(fileName)
+	if err != nil {
+		return err
+	}
+
+	encodeError := png.Encode(file, newImage)
+	return encodeError
+}
+
 var (
 	previewBorder      = lipgloss.NewStyle().Border(lipgloss.InnerHalfBlockBorder())
 	whiteSpaceWithX    = lipgloss.WithWhitespaceChars("x")
@@ -707,7 +780,12 @@ func (m *previewArtModel) View() string {
 			)
 		}
 
-		return previewBorder.Render(renderedCanvas)
+		borderedCanvas := previewBorder.Render(renderedCanvas)
+		if m.rOpts.toResizeHeight {
+			return lipgloss.JoinVertical(lipgloss.Center, borderedCanvas, "~~~")
+		} else {
+			return lipgloss.JoinHorizontal(lipgloss.Center, borderedCanvas, "~\n~\n~")
+		}
 	}()
 
 	watchTickerView := "_ watching file /"

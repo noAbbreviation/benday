@@ -14,6 +14,7 @@ const (
 
 func main() {
 	//  TODO: File explorer to select a file
+	//  TODO: Piping to standard input to import braille ASCII to images
 	model := tea.Model(newCreateCanvasModel())
 
 	if len(os.Args) >= 2 {
