@@ -64,6 +64,9 @@ type previewArtModel struct {
 	watchTicker bool
 	unpadded    bool
 
+	notifMessage string
+	notifTime    time.Time
+
 	rOpts resizeOptionStore
 }
 
@@ -490,6 +493,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return panicMsgModel(m.err.Error()), nil
 			}
 
+			m.notifTime = time.Now()
+			m.notifMessage = "finished cleaning the canvas!"
+
 			return m, nil
 		case "t":
 			if m.err != nil {
@@ -508,6 +514,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				return panicMsgModel(m.err.Error()), nil
 			}
+
+			m.notifTime = time.Now()
+			m.notifMessage = "finished toggling the padding!"
 
 			return m, nil
 		}
@@ -541,13 +550,19 @@ func (m *previewArtModel) View() string {
 
 	if m.err == nil {
 		watchView := lipgloss.JoinVertical(lipgloss.Center, renderedPixels, watchTickerView, "")
+
+		notifMessage := ""
+		if notifTime := m.notifTime; !notifTime.IsZero() && time.Since(notifTime) < time.Millisecond*2_500 {
+			notifMessage = ", " + m.notifMessage
+		}
+
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			"",
 			m.fileName,
 			watchView,
 			"(t to toggle padding, c/C to clean canvas)",
-			fmt.Sprintf("unpadded?: %v, padding:(%v,%v)", m.unpadded, m.paddingX, m.paddingY),
+			fmt.Sprintf("unpadded?: %v%v", m.unpadded, notifMessage),
 		)
 	}
 
