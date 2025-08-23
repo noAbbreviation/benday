@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -71,9 +70,11 @@ type previewArtModel struct {
 }
 
 type resizeOptionStore struct {
+	inputs         [2]int
+	toResizeHeight bool
+
 	resizing          bool
 	showConfirmPrompt bool
-	inputs            *[2]textinput.Model
 }
 
 func newPreviewArtModel(fileName string) *previewArtModel {
@@ -451,6 +452,92 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		<-m.fileWrite
 	}
 
+	if opts := &m.rOpts; opts.resizing {
+		toResizeIdx := 0
+		if opts.toResizeHeight {
+			toResizeIdx = 1
+		}
+
+		var charsX, charsY int
+		{
+			file, err := os.Open(m.fileName)
+			if err != nil {
+				m.err = decodeError{err}
+				return m, nil
+			}
+
+			imageConfig, err := png.DecodeConfig(file)
+			file.Close()
+
+			if err != nil {
+				m.err = decodeError{err}
+				return m, nil
+			}
+
+			braillePaddedW := BRAILLE_WIDTH + m.paddingX
+			braillePaddedH := BRAILLE_HEIGHT + m.paddingY
+
+			if m.unpadded {
+				braillePaddedW = BRAILLE_WIDTH
+				braillePaddedH = BRAILLE_HEIGHT
+			}
+
+			imageWidth := imageConfig.Width
+			imageHeight := imageConfig.Height
+
+			if imageWidth%(braillePaddedW) != 0 {
+				m.err = InvalidImgDimensionE{imageWidth, braillePaddedW, true}
+				return m, nil
+			}
+
+			if imageHeight%(braillePaddedH) != 0 {
+				m.err = InvalidImgDimensionE{imageHeight, braillePaddedH, false}
+				return m, nil
+			}
+
+			charsX = imageWidth / braillePaddedW
+			charsY = imageHeight / braillePaddedH
+		}
+
+		if msg, isKey := msg.(tea.KeyMsg); isKey {
+			if m.err != nil {
+				return m, nil
+			}
+
+			switch msg.String() {
+			case "+", ">", ".", "up":
+				opts.inputs[toResizeIdx] += 1
+			case "-", "<", ",", "down":
+				opts.inputs[toResizeIdx] -= 1
+			case "tab", "shift+tab", "left", "right", "ctrl+n", "ctrl+p":
+				opts.toResizeHeight = !opts.toResizeHeight
+
+			case "c":
+				opts.resizing = false
+				return m, nil
+
+			case "enter":
+				m.fileWrite <- struct{}{}
+				// TODO: Resize operation here
+				<-m.fileWrite
+
+				m.notifTime = time.Now()
+				m.notifMessage = "finished resizing the canvas!"
+
+				opts.resizing = false
+				return m, nil
+			}
+		}
+
+		if resizeWidth := opts.inputs[0]; resizeWidth+charsX <= 0 {
+			opts.inputs[0] = -(charsX - 1)
+		}
+
+		if resizeHeight := opts.inputs[1]; resizeHeight+charsY <= 0 {
+			opts.inputs[1] = -(charsY - 1)
+		}
+	}
+
 	switch msg := msg.(type) {
 	case updatePreviewMsg:
 		m.watchTicker = !m.watchTicker
@@ -470,9 +557,14 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.Tick()
 
 	case tea.KeyMsg:
+		if m.rOpts.resizing {
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "r":
-			//  TODO: resize operation
+			m.rOpts = resizeOptionStore{resizing: true}
+			return m, nil
 		case "c", "C":
 			if m.err != nil {
 				return m, nil
@@ -556,12 +648,21 @@ func (m *previewArtModel) View() string {
 			notifMessage = ", " + m.notifMessage
 		}
 
+		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas)"
+		if opts := m.rOpts; opts.resizing {
+			tooltipText = fmt.Sprintf(
+				"(resizing (%v, %v)) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm)",
+				opts.inputs[0],
+				opts.inputs[1],
+			)
+		}
+
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			"",
 			m.fileName,
 			watchView,
-			"(t to toggle padding, c/C to clean canvas)",
+			tooltipText,
 			fmt.Sprintf("unpadded?: %v%v", m.unpadded, notifMessage),
 		)
 	}
