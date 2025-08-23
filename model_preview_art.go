@@ -53,14 +53,16 @@ func (err InvalidImgDimensionE) Error() string {
 
 // TODO: Block updates when file operation is in place (using atomic.Bool)
 type previewArtModel struct {
-	fileName string
-	err      error
+	fileName  string
+	fileWrite chan struct{}
+	err       error
+
+	paddingX int
+	paddingY int
+	pixels   [][]rune
 
 	watchTicker bool
 	unpadded    bool
-	pixels      [][]rune
-
-	paddingX, paddingY int
 
 	rOpts resizeOptionStore
 }
@@ -72,7 +74,10 @@ type resizeOptionStore struct {
 }
 
 func newPreviewArtModel(fileName string) *previewArtModel {
-	newModel := &previewArtModel{fileName: fileName}
+	newModel := &previewArtModel{
+		fileName:  fileName,
+		fileWrite: make(chan struct{}, 1),
+	}
 	pixelData := newModel.GetPixels()
 
 	newModel.pixels = pixelData.pixels
@@ -88,7 +93,7 @@ func (m *previewArtModel) Init() tea.Cmd {
 }
 
 func (m *previewArtModel) Tick() (*previewArtModel, tea.Cmd) {
-	return m, tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+	return m, tea.Every(time.Millisecond*500, func(t time.Time) tea.Msg {
 		return m.GetPixels()
 	})
 }
@@ -439,6 +444,10 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if len(m.fileWrite) != 0 {
+		<-m.fileWrite
+	}
+
 	switch msg := msg.(type) {
 	case updatePreviewMsg:
 		m.watchTicker = !m.watchTicker
@@ -468,9 +477,13 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			removeNonGrayscaleColors := msg.String() == "C"
 
+			m.fileWrite <- struct{}{}
 			m.err = cleanCanvas(m.fileName, m.unpadded, m.paddingX, m.paddingY, removeNonGrayscaleColors)
+			<-m.fileWrite
+
 			if m.err != nil {
 				if _, isSilent := m.err.(silentError); isSilent {
+					m.err = nil
 					return m, nil
 				}
 
@@ -478,15 +491,18 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			return m, nil
-			// TODO: update here after stopping updates on file opts
 		case "t":
 			if m.err != nil {
 				return m, nil
 			}
 
+			m.fileWrite <- struct{}{}
 			m.err, m.unpadded = togglePaddingState(m.fileName, m.unpadded, m.paddingX, m.paddingY)
+			<-m.fileWrite
+
 			if m.err != nil {
 				if _, isSilent := m.err.(silentError); isSilent {
+					m.err = nil
 					return m, nil
 				}
 
@@ -494,7 +510,6 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			return m, nil
-			// TODO: update here after stopping updates on file opts
 		}
 	}
 
