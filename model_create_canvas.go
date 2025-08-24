@@ -373,7 +373,6 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// TODO: Could be wrapping utils
 func (m *createCanvasModel) prevItem() {
 	m.focused -= 1
 
@@ -471,7 +470,15 @@ func newCanvasImage(imageWidth int, imageHeight int, paddingX int, paddingY int,
 	}
 
 	finalImage := draw.Image(img)
-	if !unpadded {
+	if unpadded {
+		transparentImg := image.NewUniform(color.NRGBA{})
+
+		verticalRect := image.Rect(imageWidth-1, 0, imageWidth, imageHeight)
+		horizontalRect := image.Rect(0, imageHeight-1, imageWidth, imageHeight)
+
+		draw.Draw(finalImage, verticalRect, transparentImg, image.Point{}, draw.Src)
+		draw.Draw(finalImage, horizontalRect, transparentImg, image.Point{}, draw.Src)
+	} else {
 		finalImage = drawPadding(finalImage, paddingX, paddingY)
 	}
 

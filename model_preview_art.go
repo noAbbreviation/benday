@@ -34,6 +34,8 @@ type InvalidImgDimensionE struct {
 	measure           int
 	mustBeDivisibleBy int
 	errorOnX          bool
+
+	isUnpadded bool
 }
 
 func (err InvalidImgDimensionE) Error() string {
@@ -42,9 +44,15 @@ func (err InvalidImgDimensionE) Error() string {
 		measureName = "height"
 	}
 
+	minusOneText := ""
+	if err.isUnpadded {
+		minusOneText = " - 1"
+	}
+
 	return fmt.Sprintf(
-		"Invalid image dimension. Expected %v to be divisible by %v, but is instead %v px.",
+		"Invalid image dimension. Expected %v%v to be divisible by %v, but is instead %v px.",
 		measureName,
+		minusOneText,
 		err.mustBeDivisibleBy,
 		err.measure,
 	)
@@ -75,6 +83,18 @@ type resizeOptionStore struct {
 
 	resizing          bool
 	showConfirmPrompt bool
+}
+
+type canvasMeasure struct {
+	imageWidth  int
+	imageHeight int
+	isUnpadded  bool
+
+	charsX int
+	charsY int
+
+	brailleW int
+	brailleH int
 }
 
 func newPreviewArtModel(fileName string) *previewArtModel {
@@ -112,13 +132,13 @@ type updatePreviewMsg struct {
 	pixels [][]rune
 }
 
-func (m *previewArtModel) GetPixels() updatePreviewMsg {
-	dotChars := strings.Count(m.fileName, ".")
+func (model *previewArtModel) GetPixels() updatePreviewMsg {
+	dotChars := strings.Count(model.fileName, ".")
 	if dotChars < 3 {
 		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
-	fileNameInfo := strings.Split(m.fileName, ".")
+	fileNameInfo := strings.Split(model.fileName, ".")
 	{
 		start := 0
 		end := len(fileNameInfo) - 1
@@ -156,10 +176,10 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
-	m.paddingX = paddingX
-	m.paddingY = paddingY
+	model.paddingX = paddingX
+	model.paddingY = paddingY
 
-	file, err := os.Open(m.fileName)
+	file, err := os.Open(model.fileName)
 	if err != nil {
 		return updatePreviewMsg{
 			decodeError{fmt.Errorf("Error opening the file: %w", err)}, nil,
@@ -175,49 +195,23 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 		}
 	}
 
-	bounds := img.Bounds().Max
-	imageWidth := bounds.X
-	imageHeight := bounds.Y
-
-	// TODO: Make padded images with extra +1 pixel padding to both dimensions
-	m.unpadded = imageWidth%(BRAILLE_WIDTH) == 0 &&
-		imageHeight%(BRAILLE_HEIGHT) == 0
-
-	if !m.unpadded {
-		if imageWidth%(BRAILLE_WIDTH+paddingX) != 0 {
-			err = InvalidImgDimensionE{imageWidth, BRAILLE_WIDTH + paddingX, true}
-			return updatePreviewMsg{err, nil}
-		}
-
-		if imageHeight%(BRAILLE_HEIGHT+paddingY) != 0 {
-			err = InvalidImgDimensionE{imageHeight, BRAILLE_HEIGHT + paddingY, false}
-			return updatePreviewMsg{err, nil}
-		}
+	m, err := getCanvasMeasurement(model.fileName, paddingX, paddingY)
+	if err != nil {
+		return updatePreviewMsg{err, nil}
 	}
 
-	brailleWithPaddingW := (BRAILLE_WIDTH + paddingX)
-	brailleWithPaddingH := (BRAILLE_HEIGHT + paddingY)
-
-	if m.unpadded {
-		brailleWithPaddingW = BRAILLE_WIDTH
-		brailleWithPaddingH = BRAILLE_HEIGHT
-	}
-
-	brailleW := imageWidth / brailleWithPaddingW
-	brailleH := imageHeight / brailleWithPaddingH
-
-	pixels := make([][]rune, brailleH)
+	pixels := make([][]rune, m.charsY)
 	for y := range pixels {
-		pixels[y] = make([]rune, brailleW)
+		pixels[y] = make([]rune, m.charsX)
 	}
 
 	bitRep := make([]rune, 0, 8)
-	for bigYOff := 0; bigYOff < imageHeight; bigYOff += brailleWithPaddingH {
-		for bigXOff := 0; bigXOff < imageWidth; bigXOff += brailleWithPaddingW {
+	for charY := range m.charsY {
+		for charX := range m.charsX {
 			for charYOff := BRAILLE_HEIGHT - 1; charYOff >= 0; charYOff -= 1 {
 				for charXOff := BRAILLE_WIDTH - 1; charXOff >= 0; charXOff -= 1 {
-					x := bigXOff + charXOff
-					y := bigYOff + charYOff
+					x := charX*m.brailleW + charXOff
+					y := charY*m.brailleH + charYOff
 
 					if shadeType(img.At(x, y)) == colorShaded {
 						bitRep = append(bitRep, '1')
@@ -226,9 +220,6 @@ func (m *previewArtModel) GetPixels() updatePreviewMsg {
 					}
 				}
 			}
-
-			charX := bigXOff / brailleWithPaddingW
-			charY := bigYOff / brailleWithPaddingH
 
 			brailleIdx, _ := strconv.ParseUint(string(bitRep), 2, 8)
 			pixels[charY][charX] = brailleLookup[brailleIdx]
@@ -250,6 +241,24 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 		return silentError{err}, currentlyUnpadded
 	}
 
+	m, err := getCanvasMeasurement(fileName, paddingX, paddingY)
+	if err != nil {
+		return err, currentlyUnpadded
+	}
+
+	type bDimension struct{ w, h int }
+
+	beforeMeasure := bDimension{m.brailleW, m.brailleH}
+	afterMeasure := beforeMeasure
+
+	if m.isUnpadded {
+		afterMeasure.w += paddingX
+		afterMeasure.h += paddingY
+	} else {
+		afterMeasure.w -= paddingX
+		afterMeasure.h -= paddingY
+	}
+
 	rFile, err := os.Open(fileName)
 	if err != nil {
 		return decodeError{err}, currentlyUnpadded
@@ -262,37 +271,15 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 		return decodeError{err}, currentlyUnpadded
 	}
 
-	bounds := oldImage.Bounds().Max
-	oldImageWidth := bounds.X
-	oldImageHeight := bounds.Y
-
-	type bDimension struct{ w, h int }
-
-	braillePaddedW := BRAILLE_WIDTH + paddingX
-	braillePaddedH := BRAILLE_HEIGHT + paddingY
-
-	beforeMeasure := bDimension{braillePaddedW, braillePaddedH}
-	afterMeasure := bDimension{BRAILLE_WIDTH, BRAILLE_HEIGHT}
-
-	if currentlyUnpadded {
-		beforeMeasure, afterMeasure = afterMeasure, beforeMeasure
+	newImageMeasure := bDimension{m.charsX * afterMeasure.w, m.charsY * afterMeasure.h}
+	if !currentlyUnpadded {
+		newImageMeasure.w += 1
+		newImageMeasure.h += 1
 	}
 
-	if oldImageWidth%(beforeMeasure.w) != 0 {
-		return InvalidImgDimensionE{oldImageWidth, beforeMeasure.w, true}, currentlyUnpadded
-	}
-
-	if oldImageHeight%(beforeMeasure.h) != 0 {
-		return InvalidImgDimensionE{oldImageHeight, beforeMeasure.h, false}, currentlyUnpadded
-	}
-
-	charsX := oldImageWidth / beforeMeasure.w
-	charsY := oldImageHeight / beforeMeasure.h
-
-	newImage := draw.Image(image.NewNRGBA(image.Rect(0, 0, charsX*afterMeasure.w, charsY*afterMeasure.h)))
-
-	for charY := range charsY {
-		for charX := range charsX {
+	newImage := draw.Image(image.NewNRGBA(image.Rect(0, 0, newImageMeasure.w, newImageMeasure.h)))
+	for charY := range m.charsY {
+		for charX := range m.charsX {
 			for brailleYOff := range BRAILLE_HEIGHT {
 				for brailleXOff := range BRAILLE_WIDTH {
 					beforeX := charX*beforeMeasure.w + brailleXOff
@@ -361,7 +348,7 @@ func shadeType(c color.Color) shadedType {
 	}
 }
 
-func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, removeNonGrayscale bool) error {
+func cleanCanvas(fileName string, paddingX int, paddingY int, removeNonGrayscale bool) error {
 	fileStats, err := os.Stat(fileName)
 	if err != nil {
 		return decodeError{err}
@@ -369,6 +356,11 @@ func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, r
 
 	if time.Since(fileStats.ModTime()) < time.Second {
 		return silentError{err}
+	}
+
+	m, err := getCanvasMeasurement(fileName, paddingX, paddingY)
+	if err != nil {
+		return err
 	}
 
 	file, err := os.Open(fileName)
@@ -383,26 +375,14 @@ func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, r
 		return decodeError{err}
 	}
 
-	bounds := img.Bounds().Max
-	imageWidth := bounds.X
-	imageHeight := bounds.Y
-
-	braillePaddedW := BRAILLE_WIDTH + paddingX
-	braillePaddedH := BRAILLE_HEIGHT + paddingY
-
-	if isUnpadded {
-		braillePaddedW = BRAILLE_WIDTH
-		braillePaddedH = BRAILLE_HEIGHT
-	}
-
-	newImage := draw.Image(image.NewNRGBA(img.Bounds()))
+	newImage := draw.Image(image.NewNRGBA(image.Rect(0, 0, m.imageWidth, m.imageHeight)))
 	draw.Draw(newImage, img.Bounds(), img, image.Point{}, draw.Src)
 
-	defaultCanvasImg := newCanvasImage(imageWidth, imageHeight, paddingX, paddingY, isUnpadded)
+	defaultCanvasImg := newCanvasImage(m.imageWidth, m.imageHeight, paddingX, paddingY, m.isUnpadded)
 	maskForDefault := image.NewAlpha16(img.Bounds())
 
-	for bigOffsetX := 0; bigOffsetX < imageWidth; bigOffsetX += braillePaddedW {
-		for bigOffsetY := 0; bigOffsetY < imageHeight; bigOffsetY += braillePaddedH {
+	for bigOffsetX := 0; bigOffsetX < m.imageWidth; bigOffsetX += m.brailleW {
+		for bigOffsetY := 0; bigOffsetY < m.imageHeight; bigOffsetY += m.brailleH {
 			for charX := range BRAILLE_WIDTH {
 				for charY := range BRAILLE_HEIGHT {
 					x := bigOffsetX + charX
@@ -432,7 +412,15 @@ func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, r
 
 	draw.DrawMask(newImage, img.Bounds(), defaultCanvasImg, image.Point{}, maskForDefault, image.Point{}, draw.Over)
 
-	if !isUnpadded {
+	if m.isUnpadded {
+		transparentImg := image.NewUniform(color.NRGBA{})
+
+		verticalRect := image.Rect(m.imageWidth-1, 0, m.imageWidth, m.imageHeight)
+		horizontalRect := image.Rect(0, m.imageHeight-1, m.imageWidth, m.imageHeight)
+
+		draw.Draw(newImage, verticalRect, transparentImg, image.Point{}, draw.Src)
+		draw.Draw(newImage, horizontalRect, transparentImg, image.Point{}, draw.Src)
+	} else {
 		newImage = drawPadding(newImage, paddingX, paddingY)
 	}
 
@@ -443,6 +431,59 @@ func cleanCanvas(fileName string, isUnpadded bool, paddingX int, paddingY int, r
 
 	encodeError := png.Encode(file, newImage)
 	return encodeError
+}
+
+func getCanvasMeasurement(fileName string, paddingX int, paddingY int) (canvasMeasure, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return canvasMeasure{}, decodeError{err}
+	}
+
+	config, err := png.DecodeConfig(file)
+	file.Close()
+
+	if err != nil {
+		return canvasMeasure{}, decodeError{err}
+	}
+
+	imageTestWidth := config.Width
+	imageTestHeight := config.Height
+
+	brailleW := BRAILLE_WIDTH + paddingX
+	brailleH := BRAILLE_HEIGHT + paddingY
+
+	padded := imageTestWidth%brailleW == 0 && imageTestHeight%brailleH == 0
+	if !padded {
+		brailleW = BRAILLE_WIDTH
+		brailleH = BRAILLE_HEIGHT
+
+		imageTestWidth -= 1
+		imageTestHeight -= 1
+	}
+
+	charsX := imageTestWidth / brailleW
+	charsY := imageTestHeight / brailleH
+
+	if charsX*brailleW != imageTestWidth {
+		err := InvalidImgDimensionE{config.Width, brailleW, true, !padded}
+		return canvasMeasure{}, err
+	}
+
+	if charsY*brailleH != imageTestHeight {
+		err := InvalidImgDimensionE{config.Height, brailleW, true, !padded}
+		return canvasMeasure{}, err
+	}
+
+	measurements := canvasMeasure{
+		imageWidth:  config.Width,
+		imageHeight: config.Height,
+		isUnpadded:  !padded,
+		charsX:      charsX,
+		charsY:      charsY,
+		brailleW:    brailleW,
+		brailleH:    brailleH,
+	}
+	return measurements, nil
 }
 
 func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -466,7 +507,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			toResizeIdx = 1
 		}
 
-		charsX, charsY, err := getCanvasCharDimension(m.fileName, m.paddingX, m.paddingY, m.unpadded)
+		measure, err := getCanvasMeasurement(m.fileName, m.paddingX, m.paddingY)
 		if err != nil {
 			m.err = err
 			return m, nil
@@ -494,7 +535,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				resizeY := opts.inputs[1]
 
 				m.writeSignal <- struct{}{}
-				m.err = resizeCanvas(m.fileName, m.paddingX, m.paddingY, m.unpadded, resizeX, resizeY)
+				m.err = resizeCanvas(m.fileName, m.paddingX, m.paddingY, resizeX, resizeY)
 				<-m.writeSignal
 
 				if m.err != nil {
@@ -514,12 +555,12 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		if resizeWidth := opts.inputs[0]; resizeWidth+charsX <= 0 {
-			opts.inputs[0] = -(charsX - 1)
+		if resizeWidth := opts.inputs[0]; resizeWidth+measure.charsX <= 0 {
+			opts.inputs[0] = -(measure.charsX - 1)
 		}
 
-		if resizeHeight := opts.inputs[1]; resizeHeight+charsY <= 0 {
-			opts.inputs[1] = -(charsY - 1)
+		if resizeHeight := opts.inputs[1]; resizeHeight+measure.charsY <= 0 {
+			opts.inputs[1] = -(measure.charsY - 1)
 		}
 	}
 
@@ -557,7 +598,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			removeNonGrayscaleColors := msg.String() == "C"
 
 			m.writeSignal <- struct{}{}
-			m.err = cleanCanvas(m.fileName, m.unpadded, m.paddingX, m.paddingY, removeNonGrayscaleColors)
+			m.err = cleanCanvas(m.fileName, m.paddingX, m.paddingY, removeNonGrayscaleColors)
 			<-m.writeSignal
 
 			if m.err != nil {
@@ -601,47 +642,8 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func getCanvasCharDimension(fileName string, paddingX int, paddingY int, isUnpadded bool) (int, int, error) {
-	file, err := os.Open(fileName)
-	if err != nil {
-		return 0, 0, decodeError{err}
-	}
-
-	imageConfig, err := png.DecodeConfig(file)
-	file.Close()
-
-	if err != nil {
-		return 0, 0, decodeError{err}
-	}
-
-	braillePaddedW := BRAILLE_WIDTH + paddingX
-	braillePaddedH := BRAILLE_HEIGHT + paddingY
-
-	if isUnpadded {
-		braillePaddedW = BRAILLE_WIDTH
-		braillePaddedH = BRAILLE_HEIGHT
-	}
-
-	imageWidth := imageConfig.Width
-	imageHeight := imageConfig.Height
-
-	if imageWidth%(braillePaddedW) != 0 {
-		err = InvalidImgDimensionE{imageWidth, braillePaddedW, true}
-		return 0, 0, err
-	}
-
-	if imageHeight%(braillePaddedH) != 0 {
-		err = InvalidImgDimensionE{imageHeight, braillePaddedH, false}
-		return 0, 0, err
-	}
-
-	charsX := imageWidth / braillePaddedW
-	charsY := imageHeight / braillePaddedH
-
-	return charsX, charsY, nil
-}
-
-func resizeCanvas(fileName string, paddingX int, paddingY int, isUnpadded bool, resizeX int, resizeY int) error {
+// TODO: Add modified time check in this function
+func resizeCanvas(fileName string, paddingX int, paddingY int, resizeX int, resizeY int) error {
 	if resizeX == 0 && resizeY == 0 {
 		return nil
 	}
@@ -651,6 +653,11 @@ func resizeCanvas(fileName string, paddingX int, paddingY int, isUnpadded bool, 
 		return decodeError{err}
 	}
 
+	m, err := getCanvasMeasurement(fileName, paddingX, paddingY)
+	if err != nil {
+		return err
+	}
+
 	oldImage, err := png.Decode(file)
 	file.Close()
 
@@ -658,39 +665,30 @@ func resizeCanvas(fileName string, paddingX int, paddingY int, isUnpadded bool, 
 		return decodeError{err}
 	}
 
-	bounds := oldImage.Bounds().Max
-	imageWidth := bounds.X
-	imageHeight := bounds.Y
+	newCharsX := m.charsX + resizeX
+	newCharsY := m.charsY + resizeY
 
-	braillePaddedW := BRAILLE_WIDTH + paddingX
-	braillePaddedH := BRAILLE_HEIGHT + paddingY
+	newImageWidth := newCharsX * m.brailleW
+	newImageHeight := newCharsY * m.brailleH
 
-	if isUnpadded {
-		braillePaddedW = BRAILLE_WIDTH
-		braillePaddedH = BRAILLE_HEIGHT
+	if m.isUnpadded {
+		newImageWidth += 1
+		newImageHeight += 1
 	}
 
-	if imageWidth%(braillePaddedW) != 0 {
-		return InvalidImgDimensionE{imageWidth, braillePaddedW, true}
-	}
-
-	if imageHeight%(braillePaddedH) != 0 {
-		return InvalidImgDimensionE{imageHeight, braillePaddedH, false}
-	}
-
-	charsX := imageWidth / braillePaddedW
-	charsY := imageHeight / braillePaddedH
-
-	newCharsX := charsX + resizeX
-	newCharsY := charsY + resizeY
-
-	newImage := image.NewNRGBA(image.Rect(0, 0, newCharsX*braillePaddedW, newCharsY*braillePaddedH))
+	newImage := image.NewNRGBA(image.Rect(0, 0, newImageWidth, newImageHeight))
 	if resizeX > 0 || resizeY > 0 {
-		defaultCanvas := newCanvasImage(newImage.Bounds().Dx(), newImage.Bounds().Dy(), paddingX, paddingY, isUnpadded)
+		defaultCanvas := newCanvasImage(newImage.Bounds().Dx(), newImage.Bounds().Dy(), paddingX, paddingY, m.isUnpadded)
 		draw.Draw(newImage, newImage.Bounds(), defaultCanvas, image.Point{}, draw.Src)
 	}
 
-	draw.Draw(newImage, image.Rect(0, 0, min(charsX, newCharsX)*braillePaddedW, min(charsY, newCharsY)*braillePaddedH), oldImage, image.Point{}, draw.Src)
+	draw.Draw(
+		newImage,
+		image.Rect(0, 0, min(m.charsX, newCharsX)*m.brailleW, min(m.charsY, newCharsY)*m.brailleH),
+		oldImage,
+		image.Point{},
+		draw.Src,
+	)
 
 	file, err = os.Create(fileName)
 	if err != nil {
@@ -727,25 +725,25 @@ func (m *previewArtModel) View() string {
 			return previewBorder.Render(builder.String())
 		}
 
-		charsX, charsY, err := getCanvasCharDimension(m.fileName, m.paddingX, m.paddingY, m.unpadded)
+		measure, err := getCanvasMeasurement(m.fileName, m.paddingX, m.paddingY)
 		if err != nil {
 			return erroredCanvas
 		}
 
-		newCharsX := m.rOpts.inputs[0] + charsX
-		newCharsY := m.rOpts.inputs[1] + charsY
+		newCharsX := m.rOpts.inputs[0] + measure.charsX
+		newCharsY := m.rOpts.inputs[1] + measure.charsY
 
-		renderedDimensionX := min(newCharsX, charsX)
-		renderedDimensionY := min(newCharsY, charsY)
+		renderedDimensionX := min(newCharsX, measure.charsX)
+		renderedDimensionY := min(newCharsY, measure.charsY)
 
 		whiteSpaceStyleX := whiteSpaceWithPlus
 		whiteSpaceStyleY := whiteSpaceWithPlus
 
-		if newCharsX < charsX {
+		if newCharsX < measure.charsX {
 			whiteSpaceStyleX = whiteSpaceWithX
 		}
 
-		if newCharsY < charsY {
+		if newCharsY < measure.charsY {
 			whiteSpaceStyleY = whiteSpaceWithX
 		}
 
@@ -758,28 +756,28 @@ func (m *previewArtModel) View() string {
 		}
 
 		renderedCanvas := builder.String()
-		if newCharsX > charsX {
+		if newCharsX > measure.charsX {
 			renderedCanvas = lipgloss.PlaceHorizontal(
-				max(newCharsX, charsX),
+				max(newCharsX, measure.charsX),
 				lipgloss.Left,
 				renderedCanvas,
 				whiteSpaceStyleX,
 			)
 			renderedCanvas = lipgloss.PlaceVertical(
-				max(newCharsY, charsY),
+				max(newCharsY, measure.charsY),
 				lipgloss.Top,
 				renderedCanvas,
 				whiteSpaceStyleY,
 			)
 		} else {
 			renderedCanvas = lipgloss.PlaceVertical(
-				max(newCharsY, charsY),
+				max(newCharsY, measure.charsY),
 				lipgloss.Top,
 				renderedCanvas,
 				whiteSpaceStyleY,
 			)
 			renderedCanvas = lipgloss.PlaceHorizontal(
-				max(newCharsX, charsX),
+				max(newCharsX, measure.charsX),
 				lipgloss.Left,
 				renderedCanvas,
 				whiteSpaceStyleX,
