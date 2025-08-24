@@ -184,10 +184,10 @@ func (m *createCanvasModel) View() string {
 func (m *createCanvasModel) promptText() string {
 	if !m.showConfirmPrompt {
 		if m.focused == len(m.inputs)-1 {
-			return "(enter to continue, ctrl-c to cancel)"
+			return "(enter to continue, up/down to navigate, ctrl-c to exit program, esc to go back)"
 		}
 
-		return "(ctrl-c to cancel)"
+		return "(up/down to navigate, ctrl-c to exit program, esc to go back)"
 	}
 
 	hasError := false
@@ -206,10 +206,10 @@ func (m *createCanvasModel) promptText() string {
 
 		errorPrompt := lipgloss.JoinVertical(
 			lipgloss.Left,
-			"Cannot proceed with file creation.",
+			"Cannot proceed with file creation:",
 			errorMessage,
 			"",
-			"(press any key to go back, ctrl+c to cancel)",
+			"(press any key to go back, ctrl-c to exit program)",
 		)
 		return errorPrompt
 	}
@@ -285,8 +285,17 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.showConfirmPrompt {
+				m.showConfirmPrompt = false
+				m.inputs[m.focused].Focus()
+				return m, nil
+			}
+
+			startingModel := newBendayStartModel()
+			return startingModel, startingModel.Init()
 		}
 	}
 
@@ -393,7 +402,11 @@ func (m *createCanvasModel) nextItem() {
 func (m createCanvasModel) createFile() error {
 	fileName := m.fileName()
 
-	// TODO: Check for if the file exists already
+	_, err := os.Stat(fileName)
+	if err == nil {
+		return fmt.Errorf("File already exists.")
+	}
+
 	file, err := os.Create(fileName)
 	if err != nil {
 		return fmt.Errorf(

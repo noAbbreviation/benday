@@ -73,7 +73,8 @@ type previewArtModel struct {
 	notifMessage string
 	notifTime    time.Time
 
-	rOpts resizeOptionStore
+	_fromArgs bool
+	rOpts     resizeOptionStore
 }
 
 type resizeOptionStore struct {
@@ -107,6 +108,13 @@ func newPreviewArtModel(fileName string) *previewArtModel {
 	newModel.err = pixelData.err
 
 	return newModel
+}
+
+func previewArtModelFromArgs(fileName string) *previewArtModel {
+	previewModel := newPreviewArtModel(fileName)
+	previewModel._fromArgs = true
+
+	return previewModel
 }
 
 func (m *previewArtModel) Init() tea.Cmd {
@@ -494,12 +502,17 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			if m.rOpts.resizing && msg.String() == "esc" {
+			if m.rOpts.resizing {
 				m.rOpts.resizing = false
 				return m, nil
 			}
 
-			return m, tea.Quit
+			if m._fromArgs {
+				return m, tea.Quit
+			}
+
+			startModel := newBendayStartModel()
+			return startModel, startModel.Init()
 		}
 	}
 
@@ -832,9 +845,9 @@ func (m *previewArtModel) View() string {
 			notifMessage = ", " + m.notifMessage
 		}
 
-		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas, ctrl-c to exit)"
+		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas, ctrl-c to exit, esc to go back)"
 		if opts := m.rOpts; opts.resizing {
-			tooltipText = "(resizing) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm, ctrl-c to exit)"
+			tooltipText = "(resizing) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm, esc to go back)"
 		}
 
 		return lipgloss.JoinVertical(

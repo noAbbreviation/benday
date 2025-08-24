@@ -13,13 +13,12 @@ const (
 )
 
 func main() {
-	//  TODO: File explorer to select a file
 	//  TODO: Piping to standard input to import braille ASCII to images
-	model := tea.Model(newCreateCanvasModel())
+	model := tea.Model(newBendayStartModel())
 
 	if len(os.Args) >= 2 {
 		fileName := os.Args[1]
-		model = newPreviewArtModel(fileName)
+		model = previewArtModelFromArgs(fileName)
 	}
 
 	p := tea.NewProgram(model)
