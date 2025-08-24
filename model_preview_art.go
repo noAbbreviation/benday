@@ -179,6 +179,13 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 	model.paddingX = paddingX
 	model.paddingY = paddingY
 
+	m, err := getCanvasMeasurement(model.fileName, paddingX, paddingY)
+	if err != nil {
+		return updatePreviewMsg{err, nil}
+	}
+
+	model.unpadded = m.isUnpadded
+
 	file, err := os.Open(model.fileName)
 	if err != nil {
 		return updatePreviewMsg{
@@ -193,11 +200,6 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 		return updatePreviewMsg{
 			decodeError{fmt.Errorf("Error reading the image: %w", err)}, nil,
 		}
-	}
-
-	m, err := getCanvasMeasurement(model.fileName, paddingX, paddingY)
-	if err != nil {
-		return updatePreviewMsg{err, nil}
 	}
 
 	pixels := make([][]rune, m.charsY)
