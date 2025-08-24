@@ -52,9 +52,9 @@ func (err InvalidImgDimensionE) Error() string {
 
 // TODO: Block updates when file operation is in place (using atomic.Bool)
 type previewArtModel struct {
-	fileName  string
-	fileWrite chan struct{}
-	err       error
+	fileName    string
+	writeSignal chan struct{}
+	err         error
 
 	paddingX int
 	paddingY int
@@ -79,8 +79,8 @@ type resizeOptionStore struct {
 
 func newPreviewArtModel(fileName string) *previewArtModel {
 	newModel := &previewArtModel{
-		fileName:  fileName,
-		fileWrite: make(chan struct{}, 1),
+		fileName:    fileName,
+		writeSignal: make(chan struct{}, 1),
 	}
 	pixelData := newModel.GetPixels()
 
@@ -98,6 +98,11 @@ func (m *previewArtModel) Init() tea.Cmd {
 
 func (m *previewArtModel) Tick() (*previewArtModel, tea.Cmd) {
 	return m, tea.Every(time.Millisecond*500, func(t time.Time) tea.Msg {
+		if len(m.writeSignal) != 0 {
+			<-m.writeSignal
+		}
+
+		m.watchTicker = !m.watchTicker
 		return m.GetPixels()
 	})
 }
@@ -449,8 +454,10 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if len(m.fileWrite) != 0 {
-		<-m.fileWrite
+	if len(m.writeSignal) != 0 {
+		if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
+			return m, nil
+		}
 	}
 
 	if opts := &m.rOpts; opts.resizing {
@@ -486,9 +493,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				resizeX := opts.inputs[0]
 				resizeY := opts.inputs[1]
 
-				m.fileWrite <- struct{}{}
+				m.writeSignal <- struct{}{}
 				m.err = resizeCanvas(m.fileName, m.paddingX, m.paddingY, m.unpadded, resizeX, resizeY)
-				<-m.fileWrite
+				<-m.writeSignal
 
 				if m.err != nil {
 					if _, isSilent := m.err.(silentError); isSilent {
@@ -518,7 +525,6 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case updatePreviewMsg:
-		m.watchTicker = !m.watchTicker
 		m.err = msg.err
 
 		if _, shouldPanic := msg.err.(decodeError); shouldPanic {
@@ -550,9 +556,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			removeNonGrayscaleColors := msg.String() == "C"
 
-			m.fileWrite <- struct{}{}
+			m.writeSignal <- struct{}{}
 			m.err = cleanCanvas(m.fileName, m.unpadded, m.paddingX, m.paddingY, removeNonGrayscaleColors)
-			<-m.fileWrite
+			<-m.writeSignal
 
 			if m.err != nil {
 				if _, isSilent := m.err.(silentError); isSilent {
@@ -572,9 +578,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			m.fileWrite <- struct{}{}
+			m.writeSignal <- struct{}{}
 			m.err, m.unpadded = togglePaddingState(m.fileName, m.unpadded, m.paddingX, m.paddingY)
-			<-m.fileWrite
+			<-m.writeSignal
 
 			if m.err != nil {
 				if _, isSilent := m.err.(silentError); isSilent {
