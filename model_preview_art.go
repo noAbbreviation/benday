@@ -58,7 +58,6 @@ func (err InvalidImgDimensionE) Error() string {
 	)
 }
 
-// TODO: Block updates when file operation is in place (using atomic.Bool)
 type previewArtModel struct {
 	fileName    string
 	writeSignal chan struct{}
@@ -233,19 +232,19 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 	return updatePreviewMsg{nil, pixels}
 }
 
-func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, paddingY int) (error, bool) {
+func togglePaddingState(fileName string, paddingX int, paddingY int) error {
 	fileStats, err := os.Stat(fileName)
 	if err != nil {
-		return decodeError{err}, currentlyUnpadded
+		return decodeError{err}
 	}
 
 	if time.Since(fileStats.ModTime()) < time.Second {
-		return silentError{err}, currentlyUnpadded
+		return silentError{err}
 	}
 
 	m, err := getCanvasMeasurement(fileName, paddingX, paddingY)
 	if err != nil {
-		return err, currentlyUnpadded
+		return err
 	}
 
 	type bDimension struct{ w, h int }
@@ -263,18 +262,18 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 
 	rFile, err := os.Open(fileName)
 	if err != nil {
-		return decodeError{err}, currentlyUnpadded
+		return decodeError{err}
 	}
 
 	oldImage, err := png.Decode(rFile)
 	rFile.Close()
 
 	if err != nil {
-		return decodeError{err}, currentlyUnpadded
+		return decodeError{err}
 	}
 
 	newImageMeasure := bDimension{m.charsX * afterMeasure.w, m.charsY * afterMeasure.h}
-	if !currentlyUnpadded {
+	if !m.isUnpadded {
 		newImageMeasure.w += 1
 		newImageMeasure.h += 1
 	}
@@ -297,17 +296,17 @@ func togglePaddingState(fileName string, currentlyUnpadded bool, paddingX int, p
 		}
 	}
 
-	if currentlyUnpadded {
+	if m.isUnpadded {
 		newImage = drawPadding(newImage, paddingX, paddingY)
 	}
 
 	wFile, err := os.Create(fileName)
 	if err != nil {
-		return decodeError{err}, currentlyUnpadded
+		return decodeError{err}
 	}
 
 	encodeError := png.Encode(wFile, newImage)
-	return encodeError, !currentlyUnpadded
+	return encodeError
 }
 
 type shadedType int
@@ -492,7 +491,14 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
+			return m, tea.Quit
+		case "esc":
+			if m.rOpts.resizing && msg.String() == "esc" {
+				m.rOpts.resizing = false
+				return m, nil
+			}
+
 			return m, tea.Quit
 		}
 	}
@@ -549,8 +555,10 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return panicMsgModel(m.err.Error()), nil
 				}
 
-				m.notifTime = time.Now()
-				m.notifMessage = "finished resizing the canvas!"
+				if resizeX != 0 || resizeY != 0 {
+					m.notifTime = time.Now()
+					m.notifMessage = "finished resizing the canvas!"
+				}
 
 				opts.resizing = false
 				return m, nil
@@ -614,6 +622,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.notifTime = time.Now()
 			m.notifMessage = "finished cleaning the canvas!"
+			if removeNonGrayscaleColors {
+				m.notifMessage = "finished CLEANING the canvas!"
+			}
 
 			return m, nil
 		case "t":
@@ -622,7 +633,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.writeSignal <- struct{}{}
-			m.err, m.unpadded = togglePaddingState(m.fileName, m.unpadded, m.paddingX, m.paddingY)
+			m.err = togglePaddingState(m.fileName, m.paddingX, m.paddingY)
 			<-m.writeSignal
 
 			if m.err != nil {
@@ -644,20 +655,28 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// TODO: Add modified time check in this function
 func resizeCanvas(fileName string, paddingX int, paddingY int, resizeX int, resizeY int) error {
 	if resizeX == 0 && resizeY == 0 {
 		return nil
 	}
 
-	file, err := os.Open(fileName)
+	fileStats, err := os.Stat(fileName)
 	if err != nil {
 		return decodeError{err}
+	}
+
+	if time.Since(fileStats.ModTime()) < time.Second {
+		return silentError{err}
 	}
 
 	m, err := getCanvasMeasurement(fileName, paddingX, paddingY)
 	if err != nil {
 		return err
+	}
+
+	file, err := os.Open(fileName)
+	if err != nil {
+		return decodeError{err}
 	}
 
 	oldImage, err := png.Decode(file)
@@ -717,11 +736,15 @@ func (m *previewArtModel) View() string {
 
 		if !m.rOpts.resizing {
 			builder := strings.Builder{}
-			builder.WriteString(string(m.pixels[0]))
+			for _, pixel := range m.pixels[0] {
+				builder.WriteRune(pixel)
+			}
 
 			for _, line := range m.pixels[1:] {
 				builder.WriteRune('\n')
-				builder.WriteString(string(line))
+				for _, pixel := range line {
+					builder.WriteRune(pixel)
+				}
 			}
 
 			return previewBorder.Render(builder.String())
@@ -750,11 +773,15 @@ func (m *previewArtModel) View() string {
 		}
 
 		builder := strings.Builder{}
-		builder.WriteString(string(m.pixels[0][:renderedDimensionX]))
+		for _, pixel := range m.pixels[0][:renderedDimensionX] {
+			builder.WriteRune(pixel)
+		}
 
 		for _, line := range m.pixels[1:renderedDimensionY] {
 			builder.WriteRune('\n')
-			builder.WriteString(string(line[:renderedDimensionX]))
+			for _, pixel := range line[:renderedDimensionX] {
+				builder.WriteRune(pixel)
+			}
 		}
 
 		renderedCanvas := builder.String()
@@ -788,9 +815,9 @@ func (m *previewArtModel) View() string {
 
 		borderedCanvas := previewBorder.Render(renderedCanvas)
 		if m.rOpts.toResizeHeight {
-			return lipgloss.JoinVertical(lipgloss.Center, borderedCanvas, "~~~")
+			return lipgloss.JoinVertical(lipgloss.Center, borderedCanvas, " # \n###")
 		} else {
-			return lipgloss.JoinHorizontal(lipgloss.Center, borderedCanvas, "~\n~\n~")
+			return lipgloss.JoinHorizontal(lipgloss.Center, borderedCanvas, " #\n##\n #")
 		}
 	}()
 
@@ -805,24 +832,20 @@ func (m *previewArtModel) View() string {
 			notifMessage = ", " + m.notifMessage
 		}
 
-		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas)"
+		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas, ctrl-c to exit)"
 		if opts := m.rOpts; opts.resizing {
-			tooltipText = fmt.Sprintf(
-				"(resizing (%v, %v)) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm)",
-				opts.inputs[0],
-				opts.inputs[1],
-			)
+			tooltipText = "(resizing) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm, ctrl-c to exit)"
 		}
 
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			"",
-			m.fileName,
+			fmt.Sprintf("Viewing %v", m.fileName),
 			renderedPixels,
 			watchTickerView,
 			"",
 			tooltipText,
-			fmt.Sprintf("unpadded?: %v%v", m.unpadded, notifMessage),
+			fmt.Sprintf("padded?: %v%v", !m.unpadded, notifMessage),
 		)
 	}
 
@@ -834,7 +857,7 @@ func (m *previewArtModel) View() string {
 	errorPrompt := fmt.Sprintf("Error processing the file:\n%v", m.err)
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		m.fileName,
+		fmt.Sprintf("Viewing %v", m.fileName),
 		renderedPixels,
 		"",
 		watchTickerView,

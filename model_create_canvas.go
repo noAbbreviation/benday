@@ -145,44 +145,7 @@ func (m *createCanvasModel) Init() tea.Cmd {
 }
 
 func (m *createCanvasModel) View() string {
-	promptText := ""
-	//  TODO: Refactor this into its own function
-	if m.showConfirmPrompt {
-		hasError := false
-		for _, input := range m.inputs {
-			if input.Err != nil {
-				hasError = true
-				break
-			}
-		}
-
-		if modelError := m.err; hasError || modelError != nil {
-			errorMessage := "Fields marked with question marks(?) are invalid."
-			if modelError != nil {
-				errorMessage = fmt.Sprint(modelError)
-			}
-
-			errorPrompt := [...]string{
-				"Cannot proceed with file creation.",
-				errorMessage,
-				"",
-				"(press any key to go back, ctrl+c to cancel)",
-			}
-			promptText = strings.Join(errorPrompt[:], "\n")
-		} else {
-			prompt := [...]string{
-				"  Are you sure you want to create this file?",
-				fmt.Sprintf("  \"%v\"", m.fileName()),
-				"",
-				"([Y]es, [N]o / [C]ancel, [B]ack)",
-			}
-			promptText = strings.Join(prompt[:], "\n")
-		}
-	} else if m.focused == len(m.inputs)-1 {
-		promptText = "(enter to continue, ctrl-c to cancel)"
-	} else {
-		promptText = "(ctrl-c to cancel)"
-	}
+	promptText := m.promptText()
 
 	valid := []string{}
 	for _, input := range m.inputs {
@@ -215,6 +178,48 @@ func (m *createCanvasModel) View() string {
 		canvasPreview,
 		"",
 		promptText,
+	)
+}
+
+func (m *createCanvasModel) promptText() string {
+	if !m.showConfirmPrompt {
+		if m.focused == len(m.inputs)-1 {
+			return "(enter to continue, ctrl-c to cancel)"
+		}
+
+		return "(ctrl-c to cancel)"
+	}
+
+	hasError := false
+	for _, input := range m.inputs {
+		if input.Err != nil {
+			hasError = true
+			break
+		}
+	}
+
+	if modelError := m.err; hasError || modelError != nil {
+		errorMessage := "Fields marked with question marks(?) are invalid."
+		if modelError != nil {
+			errorMessage = modelError.Error()
+		}
+
+		errorPrompt := lipgloss.JoinVertical(
+			lipgloss.Left,
+			"Cannot proceed with file creation.",
+			errorMessage,
+			"",
+			"(press any key to go back, ctrl+c to cancel)",
+		)
+		return errorPrompt
+	}
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		"  Are you sure you want to create this file?",
+		fmt.Sprintf("  \"%v\"", m.fileName()),
+		"",
+		"([Y]es, [C]ancel, [B]ack)",
 	)
 }
 
@@ -321,7 +326,7 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
 				return m, nil
-			case "n", "c":
+			case "c":
 				return m, tea.Quit
 			}
 
