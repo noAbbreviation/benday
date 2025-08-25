@@ -13,7 +13,7 @@ const (
 )
 
 func main() {
-	//  TODO: Piping to standard input to import braille ASCII to images
+	//  TODO: Piping to standard input (and using UI option) to import braille ASCII to images
 	model := tea.Model(newBendayStartModel())
 
 	if len(os.Args) >= 2 {

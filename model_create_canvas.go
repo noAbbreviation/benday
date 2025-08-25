@@ -204,14 +204,13 @@ func (m *createCanvasModel) promptText() string {
 			errorMessage = modelError.Error()
 		}
 
-		errorPrompt := lipgloss.JoinVertical(
+		return lipgloss.JoinVertical(
 			lipgloss.Left,
 			"Cannot proceed with file creation:",
 			errorMessage,
 			"",
 			"(press any key to go back, ctrl-c to exit program)",
 		)
-		return errorPrompt
 	}
 
 	return lipgloss.JoinVertical(
@@ -291,6 +290,7 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showConfirmPrompt {
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
+
 				return m, nil
 			}
 

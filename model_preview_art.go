@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"image"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -73,8 +75,9 @@ type previewArtModel struct {
 	notifMessage string
 	notifTime    time.Time
 
-	_fromArgs bool
-	rOpts     resizeOptionStore
+	_fromArgs  bool
+	rOpts      resizeOptionStore
+	exportOpts exportOptionStore
 }
 
 type resizeOptionStore struct {
@@ -83,6 +86,13 @@ type resizeOptionStore struct {
 
 	resizing          bool
 	showConfirmPrompt bool
+}
+
+type exportOptionStore struct {
+	exporting         bool
+	showConfirmPrompt bool
+
+	input textinput.Model
 }
 
 type canvasMeasure struct {
@@ -98,9 +108,19 @@ type canvasMeasure struct {
 }
 
 func newPreviewArtModel(fileName string) *previewArtModel {
+	textInput := textinput.New()
+	textInput.Placeholder = ""
+	textInput.CharLimit = 64
+	textInput.Width = 64
+	textInput.Prompt = ""
+	textInput.Validate = isValidFileName
+
 	newModel := &previewArtModel{
 		fileName:    fileName,
 		writeSignal: make(chan struct{}, 1),
+		exportOpts: exportOptionStore{
+			input: textInput,
+		},
 	}
 	pixelData := newModel.GetPixels()
 
@@ -118,9 +138,10 @@ func previewArtModelFromArgs(fileName string) *previewArtModel {
 }
 
 func (m *previewArtModel) Init() tea.Cmd {
-	return func() tea.Msg {
-		return m.GetPixels()
-	}
+	return tea.Batch(
+		textinput.Blink,
+		func() tea.Msg { return m.GetPixels() },
+	)
 }
 
 func (m *previewArtModel) Tick() (*previewArtModel, tea.Cmd) {
@@ -507,6 +528,18 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			if m.exportOpts.showConfirmPrompt {
+				m.exportOpts.showConfirmPrompt = false
+				m.err = nil
+
+				return m, nil
+			}
+
+			if m.exportOpts.exporting {
+				m.exportOpts.exporting = false
+				return m, nil
+			}
+
 			if m._fromArgs {
 				return m, tea.Quit
 			}
@@ -519,6 +552,69 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(m.writeSignal) != 0 {
 		if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
 			return m, nil
+		}
+	}
+
+	if opts := &m.exportOpts; opts.exporting {
+		if m.err != nil {
+			if _, ok := msg.(tea.KeyMsg); ok {
+				if opts.showConfirmPrompt {
+					opts.showConfirmPrompt = false
+					m.err = nil
+
+					focusMsg := opts.input.Focus()
+					return m, focusMsg
+				}
+			}
+
+			if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
+				return m, nil
+			}
+		}
+
+		if m.err == nil {
+			if !opts.showConfirmPrompt {
+				if msg, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
+					switch msg.String() {
+					case "enter":
+						opts.showConfirmPrompt = true
+						return m, nil
+					}
+				}
+			}
+
+			if opts.showConfirmPrompt {
+				switch msg := msg.(type) {
+				case tea.KeyMsg:
+					switch msg.String() {
+					case "y", "enter":
+						if err := exportBraille(opts.input.Value(), m.pixels); err != nil {
+							m.err = err
+							return m, nil
+						}
+
+						m.notifTime = time.Now()
+						m.notifMessage = "finished exporting to file!"
+
+						opts.exporting = false
+						opts.showConfirmPrompt = false
+
+						return m, nil
+					case "b":
+						opts.showConfirmPrompt = false
+
+						focusCmd := opts.input.Focus()
+						return m, focusCmd
+					}
+				}
+			}
+		}
+
+		if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
+			var cmd tea.Cmd
+			opts.input, cmd = opts.input.Update(msg)
+
+			return m, cmd
 		}
 	}
 
@@ -589,7 +685,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case updatePreviewMsg:
-		m.err = msg.err
+		if m.err == nil {
+			m.err = msg.err
+		}
 
 		if _, shouldPanic := msg.err.(decodeError); shouldPanic {
 			panicMsg := panicMsgModel(
@@ -609,10 +707,20 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.exportOpts.exporting {
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "r":
 			m.rOpts = resizeOptionStore{resizing: true}
 			return m, nil
+		case "e":
+			m.exportOpts.exporting = true
+			m.exportOpts.input.SetValue("")
+
+			focusCmd := m.exportOpts.input.Focus()
+			return m, focusCmd
 		case "c", "C":
 			if m.err != nil {
 				return m, nil
@@ -733,6 +841,32 @@ func resizeCanvas(fileName string, paddingX int, paddingY int, resizeX int, resi
 	return encodeError
 }
 
+func exportBraille(fileName string, pixels [][]rune) error {
+	_, err := os.Stat(fileName)
+	if err == nil {
+		return fmt.Errorf("File already exists.")
+	}
+
+	builder := bytes.Buffer{}
+	for _, pixel := range pixels[0] {
+		builder.WriteRune(pixel)
+	}
+
+	for _, line := range pixels[1:] {
+		builder.WriteRune('\n')
+		for _, pixel := range line {
+			builder.WriteRune(pixel)
+		}
+	}
+
+	err = os.WriteFile(fileName, builder.Bytes(), 0644)
+	if err != nil {
+		return fmt.Errorf("Error writing to the file: %v", err)
+	}
+
+	return nil
+}
+
 var (
 	previewBorder      = lipgloss.NewStyle().Border(lipgloss.InnerHalfBlockBorder())
 	whiteSpaceWithX    = lipgloss.WithWhitespaceChars("x")
@@ -839,13 +973,65 @@ func (m *previewArtModel) View() string {
 		watchTickerView = "\\ watching file _"
 	}
 
+	if opts := m.exportOpts; opts.exporting {
+		if m.err != nil {
+			return lipgloss.JoinVertical(
+				lipgloss.Left,
+				"",
+				fmt.Sprintf("Viewing %v", m.fileName),
+				renderedPixels,
+				watchTickerView,
+				"",
+				"Exporting braille characters to file:",
+				"",
+				"  Error creating the file:",
+				fmt.Sprintf("  %v", m.err.Error()),
+				"",
+				"(export failed) (any key to go back)",
+				"",
+			)
+		}
+
+		if opts.showConfirmPrompt {
+			return lipgloss.JoinVertical(
+				lipgloss.Left,
+				"",
+				fmt.Sprintf("Viewing %v", m.fileName),
+				renderedPixels,
+				watchTickerView,
+				"",
+				"Exporting braille characters to file:",
+				"",
+				"  Are you sure you want to create this file?",
+				fmt.Sprintf("  \"%v\"", opts.input.Value()),
+				"",
+				"(exporting) (y/enter to confirm, b/esc to go back)",
+				"",
+			)
+		}
+
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			"",
+			fmt.Sprintf("Viewing %v", m.fileName),
+			renderedPixels,
+			watchTickerView,
+			"",
+			"Exporting braille characters to file:",
+			fmt.Sprintf("File name: %v", opts.input.View()),
+			"",
+			"(exporting) (enter to continue, ctrl-c to exit program, esc to go back)",
+			"",
+		)
+	}
+
 	if m.err == nil {
 		notifMessage := ""
 		if notifTime := m.notifTime; !notifTime.IsZero() && time.Since(notifTime) < time.Millisecond*2_500 {
 			notifMessage = ", " + m.notifMessage
 		}
 
-		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas, ctrl-c to exit, esc to go back)"
+		tooltipText := "(t to toggle padding, c/C to clean canvas, r to resize canvas, e to export, ctrl-c to exit, esc to go back)"
 		if opts := m.rOpts; opts.resizing {
 			tooltipText = "(resizing) (+/- to adjust canvas, tab to change direction, c to cancel, enter to confirm, esc to go back)"
 		}
