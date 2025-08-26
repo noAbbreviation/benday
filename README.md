@@ -5,10 +5,11 @@ Seamless workflow CLI application for creating, viewing and modifying braille AS
 ## TODO
 
 - [x] Look at the `lipgloss` package for coloring and alignments
-- Add piping of braille chars to create into canvas image
+- [x] Add piping of braille chars to create into canvas image
 
 ## Future stuff
 
 -Preview enhancements:
 
 - Limit the canvas viewport size (tweakable, movable)
+- Use OS native file locking

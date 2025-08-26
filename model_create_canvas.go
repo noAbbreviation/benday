@@ -223,7 +223,7 @@ func (m *createCanvasModel) promptText() string {
 		"  Are you sure you want to create this file?",
 		fmt.Sprintf("  \"%v\"", m.fileName()),
 		"",
-		"(create new canvas) (y to confirm, n to go back)",
+		"(create new canvas) (y/enter to confirm, b/esc to go back)",
 	)
 }
 
@@ -336,7 +336,7 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				previewModel := newPreviewArtModel(m.fileName())
 				return previewModel, previewModel.Init()
-			case "n", "b":
+			case "b":
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
 				return m, nil

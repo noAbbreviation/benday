@@ -131,7 +131,7 @@ func (m *importCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				previewModel := newPreviewArtModel(m.fileName())
 				return previewModel, previewModel.Init()
-			case "n", "b":
+			case "b":
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
 				return m, nil
@@ -303,7 +303,7 @@ func (m *importCanvasModel) promptText() string {
 		"  Are you sure you want to create this file?",
 		fmt.Sprintf("  \"%v\"", m.fileName()),
 		"",
-		"(importing to benday) (y to confirm, n to go back)",
+		"(importing to benday) (y/enter to confirm, b/esc to go back)",
 	)
 }
 
