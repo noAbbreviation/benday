@@ -145,8 +145,6 @@ func (m *createCanvasModel) Init() tea.Cmd {
 }
 
 func (m *createCanvasModel) View() string {
-	promptText := m.promptText()
-
 	valid := [len(m.inputs)]string{}
 	for i, input := range m.inputs {
 		if input.Err != nil {
@@ -178,11 +176,12 @@ func (m *createCanvasModel) View() string {
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		"Generate a new canvas image:",
+		"",
+		"Generate new canvas image:",
 		"",
 		canvasPreview,
 		"",
-		promptText,
+		m.promptText(),
 		"",
 	)
 }
@@ -190,10 +189,10 @@ func (m *createCanvasModel) View() string {
 func (m *createCanvasModel) promptText() string {
 	if !m.showConfirmPrompt {
 		if m.focused == len(m.inputs)-1 {
-			return "(enter to continue, up/down to navigate, ctrl-c to exit program, esc to go back)"
+			return "(create new canvas) (enter to continue, up/down to navigate, ctrl-c to exit program, esc to go back)"
 		}
 
-		return "(up/down to navigate, ctrl-c to exit program, esc to go back)"
+		return "(create new canvas) (up/down to navigate, ctrl-c to exit program, esc to go back)"
 	}
 
 	hasError := false
@@ -212,10 +211,10 @@ func (m *createCanvasModel) promptText() string {
 
 		return lipgloss.JoinVertical(
 			lipgloss.Left,
-			"Cannot proceed with file creation:",
+			"Cannot proceed with canvas creation:",
 			errorMessage,
 			"",
-			"(press any key to go back, ctrl-c to exit program)",
+			"(canvas creation failed) (press any key to go back, ctrl-c to exit program)",
 		)
 	}
 
@@ -224,7 +223,7 @@ func (m *createCanvasModel) promptText() string {
 		"  Are you sure you want to create this file?",
 		fmt.Sprintf("  \"%v\"", m.fileName()),
 		"",
-		"(y to confirm, n to go back)",
+		"(create new canvas) (y to confirm, n to go back)",
 	)
 }
 
@@ -483,7 +482,7 @@ func newCanvasImage(imageWidth int, imageHeight int, paddingX int, paddingY int,
 					x := bigXOff + charXOff
 					y := bigYOff + charYOff
 
-					img.Set(x, y, colorGray)
+					img.SetNRGBA(x, y, colorGray)
 				}
 			}
 		}

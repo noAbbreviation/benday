@@ -13,12 +13,24 @@ const (
 )
 
 func main() {
-	//  TODO: Piping to standard input (and using UI option) to import braille ASCII to images
-	model := tea.Model(newBendayStartModel())
+	var model tea.Model
 
-	if len(os.Args) >= 2 {
+	switch {
+	case hasStdinPipe():
+		pixels, err := importPixelData(os.Stdin)
+		if err != nil {
+			fmt.Printf("Error: Cannot import from piped input: %v", err)
+			os.Exit(1)
+		}
+
+		model = importCanvasModelFromArgs(pixels)
+
+	case len(os.Args) >= 2:
 		fileName := os.Args[1]
 		model = previewArtModelFromArgs(fileName)
+
+	default:
+		model = newBendayStartModel()
 	}
 
 	p := tea.NewProgram(model)
@@ -26,4 +38,13 @@ func main() {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
 	}
+}
+
+func hasStdinPipe() bool {
+	fileStat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+
+	return fileStat.Mode()&os.ModeNamedPipe != 0
 }

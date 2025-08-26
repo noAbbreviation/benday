@@ -159,10 +159,10 @@ func importPixelData(brailleAsciiFile *os.File) ([][]rune, error) {
 			return -1
 		}, brailleLine)
 
-		pixel := []rune(brailleLine)
-		pixels = append(pixels, pixel)
+		pixelLine := []rune(brailleLine)
+		pixels = append(pixels, pixelLine)
 
-		maxLen = max(maxLen, len(pixel))
+		maxLen = max(maxLen, len(pixelLine))
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -170,6 +170,18 @@ func importPixelData(brailleAsciiFile *os.File) ([][]rune, error) {
 	}
 
 	if len(pixels) == 0 {
+		return nil, fmt.Errorf("No data received.")
+	}
+
+	linesAreEmpty := true
+	for _, line := range pixels {
+		if len(line) != 0 {
+			linesAreEmpty = false
+			break
+		}
+	}
+
+	if linesAreEmpty {
 		return nil, fmt.Errorf("No data received.")
 	}
 

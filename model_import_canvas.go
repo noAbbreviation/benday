@@ -22,6 +22,7 @@ type importCanvasModel struct {
 	err     error
 
 	showConfirmPrompt bool
+	_fromArgs         bool
 }
 
 const (
@@ -64,6 +65,13 @@ func newImportCanvasModel(pixels [][]rune) *importCanvasModel {
 	}
 }
 
+func importCanvasModelFromArgs(pixels [][]rune) *importCanvasModel {
+	model := newImportCanvasModel(pixels)
+	model._fromArgs = true
+
+	return model
+}
+
 func (m *importCanvasModel) Init() tea.Cmd {
 	return textinput.Blink
 }
@@ -80,6 +88,10 @@ func (m *importCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputs[m.focused].Focus()
 
 				return m, nil
+			}
+
+			if m._fromArgs {
+				return m, tea.Quit
 			}
 
 			startingModel := newBendayStartModel()
@@ -232,8 +244,8 @@ func (m importCanvasModel) createFile() error {
 			}
 			slices.Reverse(brailleBits)
 
-			for brailleYOff := BRAILLE_HEIGHT - 1; brailleYOff >= 0; brailleYOff -= 1 {
-				for brailleXOff := BRAILLE_WIDTH - 1; brailleXOff >= 0; brailleXOff -= 1 {
+			for brailleYOff := range BRAILLE_HEIGHT {
+				for brailleXOff := range BRAILLE_WIDTH {
 					bitsIdx := brailleYOff*BRAILLE_WIDTH + brailleXOff
 
 					if brailleBits[bitsIdx] != '1' {
@@ -257,10 +269,10 @@ func (m importCanvasModel) createFile() error {
 func (m *importCanvasModel) promptText() string {
 	if !m.showConfirmPrompt {
 		if m.focused == len(m.inputs)-1 {
-			return "(enter to continue, up/down to navigate, ctrl-c to exit program, esc to go back)"
+			return "(importing to benday) (enter to continue, up/down to navigate, ctrl-c to exit program, esc to go back)"
 		}
 
-		return "(up/down to navigate, ctrl-c to exit program, esc to go back)"
+		return "(importing to benday) (up/down to navigate, ctrl-c to exit program, esc to go back)"
 	}
 
 	hasError := false
@@ -282,7 +294,7 @@ func (m *importCanvasModel) promptText() string {
 			"Cannot proceed with importing file:",
 			errorMessage,
 			"",
-			"(press any key to go back, ctrl-c to exit program)",
+			"(importing failed) (press any key to go back, ctrl-c to exit program)",
 		)
 	}
 
@@ -291,7 +303,7 @@ func (m *importCanvasModel) promptText() string {
 		"  Are you sure you want to create this file?",
 		fmt.Sprintf("  \"%v\"", m.fileName()),
 		"",
-		"(y to confirm, n to go back)",
+		"(importing to benday) (y to confirm, n to go back)",
 	)
 }
 
@@ -337,8 +349,8 @@ func (m *importCanvasModel) View() string {
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
-		"Import a braille ascii file:",
 		"",
+		"Import a braille ascii file:",
 		previewCanvas,
 		"",
 		promptText,
