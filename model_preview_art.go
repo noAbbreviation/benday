@@ -421,7 +421,7 @@ func cleanCanvas(fileName string, paddingX int, paddingY int, removeNonGrayscale
 					shade := shadeType(newImage.At(x, y))
 
 					if shade == colorShaded {
-						colorBlack := color.NRGBA{0, 0, 0, 0xff}
+						colorBlack := color.NRGBA{0x33, 0x33, 0x33, 0xff}
 						newImage.Set(x, y, colorBlack)
 
 						continue
@@ -685,6 +685,7 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case updatePreviewMsg:
+		// FIX: Accommodate update msg error and model error
 		if m.err == nil {
 			m.err = msg.err
 		}

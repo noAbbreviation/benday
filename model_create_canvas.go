@@ -60,16 +60,16 @@ func newCreateCanvasModel() *createCanvasModel {
 
 	inputs[paddingXInputC] = textinput.New()
 	inputs[paddingXInputC].Placeholder = ""
-	inputs[paddingXInputC].CharLimit = 5
-	inputs[paddingXInputC].Width = 7
+	inputs[paddingXInputC].CharLimit = 2
+	inputs[paddingXInputC].Width = 5
 	inputs[paddingXInputC].Prompt = ""
 	inputs[paddingXInputC].Validate = isValidPadding
 	inputs[paddingXInputC].SetValue("0")
 
 	inputs[paddingYInputC] = textinput.New()
 	inputs[paddingYInputC].Placeholder = ""
-	inputs[paddingYInputC].CharLimit = 5
-	inputs[paddingYInputC].Width = 7
+	inputs[paddingYInputC].CharLimit = 2
+	inputs[paddingYInputC].Width = 5
 	inputs[paddingYInputC].Prompt = ""
 	inputs[paddingYInputC].SetValue("2")
 	inputs[paddingYInputC].Validate = isValidPadding
@@ -147,12 +147,12 @@ func (m *createCanvasModel) Init() tea.Cmd {
 func (m *createCanvasModel) View() string {
 	promptText := m.promptText()
 
-	valid := []string{}
-	for _, input := range m.inputs {
+	valid := [len(m.inputs)]string{}
+	for i, input := range m.inputs {
 		if input.Err != nil {
-			valid = append(valid, "?")
+			valid[i] = "?"
 		} else {
-			valid = append(valid, ">")
+			valid[i] = ">"
 		}
 	}
 
@@ -169,7 +169,12 @@ func (m *createCanvasModel) View() string {
 		fmt.Sprintf("%v File name prefix: %s", valid[fileNameInputC], m.inputs[fileNameInputC].View()),
 	)
 
-	canvasPreview := lipgloss.JoinHorizontal(lipgloss.Center, m.previewCanvas(), " ", canvasForm)
+	canvasPreview := lipgloss.JoinHorizontal(
+		lipgloss.Center,
+		previewBorder.Render(m.previewCanvas()),
+		" ",
+		canvasForm,
+	)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -178,6 +183,7 @@ func (m *createCanvasModel) View() string {
 		canvasPreview,
 		"",
 		promptText,
+		"",
 	)
 }
 
@@ -218,7 +224,7 @@ func (m *createCanvasModel) promptText() string {
 		"  Are you sure you want to create this file?",
 		fmt.Sprintf("  \"%v\"", m.fileName()),
 		"",
-		"([Y]es, [C]ancel, [B]ack)",
+		"(y to confirm, n to go back)",
 	)
 }
 
@@ -331,12 +337,10 @@ func (m *createCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				previewModel := newPreviewArtModel(m.fileName())
 				return previewModel, previewModel.Init()
-			case "b":
+			case "n", "b":
 				m.showConfirmPrompt = false
 				m.inputs[m.focused].Focus()
 				return m, nil
-			case "c":
-				return m, tea.Quit
 			}
 
 		case error:
