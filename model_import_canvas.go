@@ -237,7 +237,7 @@ func (m importCanvasModel) createFile() error {
 
 	for charY, _line := range m.pixels {
 		for charX, charRune := range _line {
-			brailleBits := []rune(strconv.FormatUint(uint64(brailleReverseLookup[charRune]), 2))
+			brailleBits := []rune(strconv.FormatInt(BrailleReverseLookup(charRune), 2))
 
 			for range BRAILLE_WIDTH*BRAILLE_HEIGHT - len(brailleBits) {
 				brailleBits = append([]rune{'0'}, brailleBits...)
