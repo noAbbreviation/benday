@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"image/png"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -163,23 +164,21 @@ type updatePreviewMsg struct {
 }
 
 func (model *previewArtModel) GetPixels() updatePreviewMsg {
+	file, err := os.Open(model.fileName)
+	if err != nil {
+		err := decodeError{fmt.Errorf("File does not exist.")}
+		return updatePreviewMsg{err, nil}
+	}
+
+	defer file.Close()
+
 	dotChars := strings.Count(model.fileName, ".")
 	if dotChars < 3 {
 		return updatePreviewMsg{InvalidFileNameError, nil}
 	}
 
 	fileNameInfo := strings.Split(model.fileName, ".")
-	{
-		start := 0
-		end := len(fileNameInfo) - 1
-
-		for start < end {
-			fileNameInfo[start], fileNameInfo[end] = fileNameInfo[end], fileNameInfo[start]
-
-			start += 1
-			end -= 1
-		}
-	}
+	slices.Reverse(fileNameInfo)
 
 	if imgExtension := fileNameInfo[0]; imgExtension != "png" {
 		return updatePreviewMsg{InvalidFileNameError, nil}
@@ -196,15 +195,13 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 
 	paddingSpecSplit := strings.Split(paddingSpec, "x")
 
-	paddingX, err := strconv.Atoi(paddingSpecSplit[0])
-	if err != nil {
-		return updatePreviewMsg{InvalidFileNameError, nil}
+	if isValidPadding(paddingSpecSplit[0]) != nil || isValidPadding(paddingSpecSplit[1]) != nil {
+		err := fmt.Errorf("Padding is an invalid value: %w", NotAPositiveNumberError)
+		return updatePreviewMsg{err, nil}
 	}
 
-	paddingY, err := strconv.Atoi(paddingSpecSplit[1])
-	if err != nil {
-		return updatePreviewMsg{InvalidFileNameError, nil}
-	}
+	paddingX, _ := strconv.Atoi(paddingSpecSplit[0])
+	paddingY, _ := strconv.Atoi(paddingSpecSplit[1])
 
 	model.paddingX = paddingX
 	model.paddingY = paddingY
@@ -216,16 +213,7 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 
 	model.unpadded = m.isUnpadded
 
-	file, err := os.Open(model.fileName)
-	if err != nil {
-		return updatePreviewMsg{
-			decodeError{fmt.Errorf("Error opening the file: %w", err)}, nil,
-		}
-	}
-
 	img, err := png.Decode(file)
-	file.Close()
-
 	if err != nil {
 		return updatePreviewMsg{
 			decodeError{fmt.Errorf("Error reading the image: %w", err)}, nil,
@@ -872,7 +860,7 @@ var (
 	whiteSpaceWithX    = lipgloss.WithWhitespaceChars("x")
 	whiteSpaceWithPlus = lipgloss.WithWhitespaceChars("+")
 
-	erroredCanvas = "xxxxx\nxxxxx\nxxxxx\nxxxxx\nxxxxx"
+	erroredCanvas = previewBorder.Render("xxxxx\nxxxxx\nxxxxx\nxxxxx\nxxxxx")
 )
 
 func (m *previewArtModel) View() string {
