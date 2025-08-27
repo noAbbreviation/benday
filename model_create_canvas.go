@@ -21,6 +21,8 @@ var (
 	NotAWholeNumberError    = errors.New("Number must be greater than zero.")
 	NotAPositiveNumberError = errors.New("Number must be a positive number.")
 	EmptyFileNameError      = errors.New("Filename is empty.")
+
+	FileDoesNotExistError = errors.New("File does not exist.")
 )
 
 type createCanvasModel struct {

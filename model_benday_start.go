@@ -83,7 +83,7 @@ func (m *bendayStartModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.importingFile {
 				file, err := os.Open(filePath)
 				if err != nil {
-					m.err = err
+					m.err = FileDoesNotExistError
 					return m, nil
 				}
 

@@ -166,7 +166,7 @@ type updatePreviewMsg struct {
 func (model *previewArtModel) GetPixels() updatePreviewMsg {
 	file, err := os.Open(model.fileName)
 	if err != nil {
-		err := decodeError{fmt.Errorf("File does not exist.")}
+		err := decodeError{FileDoesNotExistError}
 		return updatePreviewMsg{err, nil}
 	}
 
@@ -254,7 +254,7 @@ func (model *previewArtModel) GetPixels() updatePreviewMsg {
 func togglePaddingState(fileName string, paddingX int, paddingY int) error {
 	fileStats, err := os.Stat(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	if time.Since(fileStats.ModTime()) < time.Second {
@@ -281,7 +281,7 @@ func togglePaddingState(fileName string, paddingX int, paddingY int) error {
 
 	rFile, err := os.Open(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	oldImage, err := png.Decode(rFile)
@@ -371,7 +371,7 @@ func shadeType(c color.Color) shadedType {
 func cleanCanvas(fileName string, paddingX int, paddingY int, removeNonGrayscale bool) error {
 	fileStats, err := os.Stat(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	if time.Since(fileStats.ModTime()) < time.Second {
@@ -385,7 +385,7 @@ func cleanCanvas(fileName string, paddingX int, paddingY int, removeNonGrayscale
 
 	file, err := os.Open(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	img, err := png.Decode(file)
@@ -456,7 +456,7 @@ func cleanCanvas(fileName string, paddingX int, paddingY int, removeNonGrayscale
 func getCanvasMeasurement(fileName string, paddingX int, paddingY int) (canvasMeasure, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
-		return canvasMeasure{}, decodeError{err}
+		return canvasMeasure{}, decodeError{FileDoesNotExistError}
 	}
 
 	config, err := png.DecodeConfig(file)
@@ -771,7 +771,7 @@ func resizeCanvas(fileName string, paddingX int, paddingY int, resizeX int, resi
 
 	fileStats, err := os.Stat(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	if time.Since(fileStats.ModTime()) < time.Second {
@@ -785,7 +785,7 @@ func resizeCanvas(fileName string, paddingX int, paddingY int, resizeX int, resi
 
 	file, err := os.Open(fileName)
 	if err != nil {
-		return decodeError{err}
+		return decodeError{FileDoesNotExistError}
 	}
 
 	oldImage, err := png.Decode(file)
