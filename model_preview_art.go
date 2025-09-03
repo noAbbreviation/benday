@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -62,8 +63,8 @@ func (err InvalidImgDimensionE) Error() string {
 }
 
 type previewArtModel struct {
-	fileName    string
-	writeSignal chan struct{}
+	fileName   string
+	writeTasks sync.WaitGroup
 
 	processError    error
 	updateViewError error
@@ -119,8 +120,8 @@ func newPreviewArtModel(fileName string) *previewArtModel {
 	textInput.Validate = isValidFileName
 
 	newModel := &previewArtModel{
-		fileName:    fileName,
-		writeSignal: make(chan struct{}, 1),
+		fileName:   fileName,
+		writeTasks: sync.WaitGroup{},
 		exportOpts: exportOptionStore{
 			input: textInput,
 		},
@@ -149,10 +150,6 @@ func (m *previewArtModel) Init() tea.Cmd {
 
 func (m *previewArtModel) Tick() (*previewArtModel, tea.Cmd) {
 	return m, tea.Every(time.Millisecond*500, func(t time.Time) tea.Msg {
-		if len(m.writeSignal) != 0 {
-			<-m.writeSignal
-		}
-
 		m.watchTicker = !m.watchTicker
 		return m.GetPixels()
 	})
@@ -539,10 +536,23 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if len(m.writeSignal) != 0 {
-		if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
-			return m, nil
+	m.writeTasks.Wait()
+
+	if msg, isUpdateMsg := msg.(updatePreviewMsg); isUpdateMsg {
+		m.updateViewError = msg.err
+
+		if _, shouldPanic := msg.err.(decodeError); shouldPanic {
+			panicMsg := panicMsgModel(
+				fmt.Sprintf("Filename: %v\n%v", m.fileName, msg.err),
+			)
+			return panicMsg, tea.Quit
 		}
+
+		if msg.err == nil {
+			m.pixels = msg.pixels
+		}
+
+		return m.Tick()
 	}
 
 	if opts := &m.exportOpts; opts.exporting {
@@ -557,55 +567,49 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
-				return m, nil
-			}
+			return m, nil
 		}
 
-		if m.processError == nil {
-			if !opts.showConfirmPrompt {
-				if msg, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
-					switch msg.String() {
-					case "enter":
-						opts.showConfirmPrompt = true
+		if !opts.showConfirmPrompt {
+			if msg, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
+				switch msg.String() {
+				case "enter":
+					opts.showConfirmPrompt = true
+					return m, nil
+				}
+			}
+		} else {
+			switch msg := msg.(type) {
+			case tea.KeyMsg:
+				switch msg.String() {
+				case "y", "enter":
+					if err := exportBraille(opts.input.Value(), m.pixels); err != nil {
+						m.processError = err
 						return m, nil
 					}
+
+					m.notifTime = time.Now()
+					m.notifMessage = "finished exporting to file!"
+
+					opts.exporting = false
+					opts.showConfirmPrompt = false
+
+					return m, nil
+				case "b":
+					opts.showConfirmPrompt = false
+
+					focusCmd := opts.input.Focus()
+					return m, focusCmd
 				}
 			}
 
-			if opts.showConfirmPrompt {
-				switch msg := msg.(type) {
-				case tea.KeyMsg:
-					switch msg.String() {
-					case "y", "enter":
-						if err := exportBraille(opts.input.Value(), m.pixels); err != nil {
-							m.processError = err
-							return m, nil
-						}
-
-						m.notifTime = time.Now()
-						m.notifMessage = "finished exporting to file!"
-
-						opts.exporting = false
-						opts.showConfirmPrompt = false
-
-						return m, nil
-					case "b":
-						opts.showConfirmPrompt = false
-
-						focusCmd := opts.input.Focus()
-						return m, focusCmd
-					}
-				}
-			}
+			return m, nil
 		}
 
-		if _, isUpdateMsg := msg.(updatePreviewMsg); !isUpdateMsg {
-			var cmd tea.Cmd
-			opts.input, cmd = opts.input.Update(msg)
+		var cmd tea.Cmd
+		opts.input, cmd = opts.input.Update(msg)
 
-			return m, cmd
-		}
+		return m, cmd
 	}
 
 	if opts := &m.rOpts; opts.resizing {
@@ -641,9 +645,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				resizeX := opts.inputs[0]
 				resizeY := opts.inputs[1]
 
-				m.writeSignal <- struct{}{}
+				m.writeTasks.Add(1)
 				m.processError = resizeCanvas(m.fileName, m.paddingX, m.paddingY, resizeX, resizeY)
-				<-m.writeSignal
+				m.writeTasks.Done()
 
 				if m.processError != nil {
 					if _, isSilent := m.processError.(silentError); isSilent {
@@ -671,34 +675,12 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if resizeHeight := opts.inputs[1]; resizeHeight+measure.charsY <= 0 {
 			opts.inputs[1] = -(measure.charsY - 1)
 		}
+
+		return m, nil
 	}
 
 	switch msg := msg.(type) {
-	case updatePreviewMsg:
-		m.updateViewError = msg.err
-
-		if _, shouldPanic := msg.err.(decodeError); shouldPanic {
-			panicMsg := panicMsgModel(
-				fmt.Sprintf("Filename: %v\n%v", m.fileName, msg.err),
-			)
-			return panicMsg, tea.Quit
-		}
-
-		if msg.err == nil {
-			m.pixels = msg.pixels
-		}
-
-		return m.Tick()
-
 	case tea.KeyMsg:
-		if m.rOpts.resizing {
-			return m, nil
-		}
-
-		if m.exportOpts.exporting {
-			return m, nil
-		}
-
 		switch msg.String() {
 		case "r":
 			m.rOpts = resizeOptionStore{resizing: true}
@@ -716,9 +698,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			removeNonGrayscaleColors := msg.String() == "C"
 
-			m.writeSignal <- struct{}{}
+			m.writeTasks.Add(1)
 			m.processError = cleanCanvas(m.fileName, m.paddingX, m.paddingY, removeNonGrayscaleColors)
-			<-m.writeSignal
+			m.writeTasks.Done()
 
 			if m.processError != nil {
 				if _, isSilent := m.processError.(silentError); isSilent {
@@ -741,9 +723,9 @@ func (m *previewArtModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			m.writeSignal <- struct{}{}
+			m.writeTasks.Add(1)
 			m.processError = togglePaddingState(m.fileName, m.paddingX, m.paddingY)
-			<-m.writeSignal
+			m.writeTasks.Done()
 
 			if m.processError != nil {
 				if _, isSilent := m.processError.(silentError); isSilent {

@@ -52,14 +52,15 @@ var brailleCharacters = []string{
 	"⣴", "⣵", "⣼", "⣽", "⣶", "⣷", "⣾", "⣿",
 }
 
-var brailleLookup = []rune(strings.Join(brailleCharacters, ""))
+var (
+	brailleLookup        = []rune(strings.Join(brailleCharacters, ""))
+	brailleReverseLookup = map[rune]int64{}
+)
 
-func BrailleReverseLookup(char rune) int64 {
-	if !isBraille(char) {
-		return 0
+func init() {
+	for i, char := range brailleLookup {
+		brailleReverseLookup[char] = int64(i)
 	}
-
-	return int64(char - 0x2800)
 }
 
 func isBraille(r rune) bool {
