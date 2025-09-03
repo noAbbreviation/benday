@@ -129,7 +129,13 @@ func (m *importCanvasModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-				previewModel := newPreviewArtModel(m.fileName())
+				var previewModel *previewArtModel
+				if m._fromArgs {
+					previewModel = previewArtModelFromArgs(m.fileName())
+				} else {
+					previewModel = newPreviewArtModel(m.fileName())
+				}
+
 				return previewModel, previewModel.Init()
 			case "b":
 				m.showConfirmPrompt = false
