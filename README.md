@@ -64,8 +64,8 @@ If you have at least Go 1.23, install using the following command:
 go install github.com/noAbbreviation/benday
 ```
 
-> [!NOTE]
-> A release may be in the works.
+Alternatively, you can download the binaries in the [Releases Section](https://github.com/noAbbreviation/benday/releases)
+of this repository.
 
 ## Future stuff (maybe)
 

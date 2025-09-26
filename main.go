@@ -12,7 +12,7 @@ const (
 	BRAILLE_WIDTH  = 2
 )
 
-var versionString string = "[dev build]"
+var versionString string = "v1.0.0-dev"
 
 func main() {
 	var model tea.Model
