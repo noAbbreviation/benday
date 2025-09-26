@@ -12,6 +12,8 @@ const (
 	BRAILLE_WIDTH  = 2
 )
 
+var versionString string = "[dev build]"
+
 func main() {
 	var model tea.Model
 
@@ -24,6 +26,10 @@ func main() {
 		}
 
 		model = importCanvasModelFromArgs(pixels)
+
+	case len(os.Args) >= 2 && os.Args[1] == "--version":
+		fmt.Printf("benday version %v\n", versionString)
+		os.Exit(0)
 
 	case len(os.Args) >= 2:
 		fileName := os.Args[1]
