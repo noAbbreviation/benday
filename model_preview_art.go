@@ -151,6 +151,7 @@ func (m *previewArtModel) Init() tea.Cmd {
 func (m *previewArtModel) Tick() (*previewArtModel, tea.Cmd) {
 	return m, tea.Every(time.Millisecond*500, func(t time.Time) tea.Msg {
 		m.watchTicker = !m.watchTicker
+		m.writeTasks.Wait()
 		return m.GetPixels()
 	})
 }
